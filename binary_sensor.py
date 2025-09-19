@@ -4,15 +4,17 @@ import logging
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorEntity,
     BinarySensorDeviceClass,
+    BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant
-    # yes
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 
-from .const import DOMAIN
+from .const import (
+    CONF_HOST,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,7 +22,11 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     data = hass.data[DOMAIN][entry.entry_id]
     device = data["device_coordinator"]
-    host = entry.data.get("host")
+    host = entry.options.get(CONF_HOST, entry.data.get(CONF_HOST))
+
+    if host is None:
+        _LOGGER.warning("Host is missing from config entry %s", entry.entry_id)
+        host = "unknown"
 
     entities = [
         UniFiWanInternet(device, entry, host),

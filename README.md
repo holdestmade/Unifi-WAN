@@ -20,12 +20,12 @@ Pull WAN metrics from a UniFi OS console (UDM/UDR/UXG) using the `X-API-Key` hea
 - UniFi WAN1 Link — `gateway.wan1.up`
 - UniFi WAN2 Link — `gateway.wan2.up`
 
-## Options (editable later)
+## Options
 - **Host / IP**
 - **API Key**
 - **Site** (default `default`)
 - **Verify SSL certificate**
-- **Scan interval (s)**
+- **Scan interval (s)** (Maximum API calls allowed is 100 per minute)
 
 Changing any option revalidates against `/stat/device` and reloads the entry.
 

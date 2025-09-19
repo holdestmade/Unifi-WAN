@@ -120,7 +120,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_HOST, default=opts.get(CONF_HOST, data.get(CONF_HOST, ""))): str,
                 vol.Optional(CONF_API_KEY, default=opts.get(CONF_API_KEY, data.get(CONF_API_KEY, ""))): str,
                 vol.Optional(CONF_SITE, default=opts.get(CONF_SITE, data.get(CONF_SITE, DEFAULT_SITE))): str,
-                vol.Optional(CONF_VERIFY_SSL, default=opts.get(CONF_VERIFY_SSL, data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))                ): bool,
-                vol.Optional(CONF_SCAN_INTERVAL, default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): int,
+                vol.Optional(
+                    CONF_VERIFY_SSL,
+                    default=opts.get(
+                        CONF_VERIFY_SSL,
+                        data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_SCAN_INTERVAL,
+                    default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): int,
             }
         )

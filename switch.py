@@ -4,12 +4,12 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import CONF_HOST, DOMAIN
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     shared = hass.data[DOMAIN][entry.entry_id]
-    host = entry.data.get("host")
+    host = entry.options.get(CONF_HOST, entry.data.get(CONF_HOST)) or "unknown"
     async_add_entities([UniFiAutoSpeedtestSwitch(shared, host)])
 
 

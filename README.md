@@ -3,6 +3,9 @@ Home Assistant custom component
 
 Pull WAN metrics from a UniFi OS console (UDM/UDR/UXG) using the `X-API-Key` header — **single endpoint**: `/proxy/network/api/s/<site>/stat/device`.
 
+Get API key from Unifi Console:
+  settings/control-plane/integrations
+
 Work in Progress
 
 ## Exposed entities

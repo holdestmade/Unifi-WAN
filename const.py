@@ -5,7 +5,7 @@ CONF_API_KEY = "api_key"
 CONF_SITE = "site"
 CONF_VERIFY_SSL = "verify_ssl"
 CONF_SCAN_INTERVAL = "scan_interval"
-DEFAULT_SCAN_INTERVAL = 30 
+DEFAULT_SCAN_INTERVAL = 30
 LEGACY_CONF_DEVICE_INTERVAL = "device_interval"
 
 CONF_AUTO_SPEEDTEST = "auto_speedtest"

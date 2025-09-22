@@ -29,18 +29,20 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def _async_validate(hass: HomeAssistant, host: str, api_key: str, site: str, verify_ssl: bool) -> None:
-    """Probe /stat/device to validate."""
+    """Probe /stat/device to validate credentials/host/site."""
+    host = (host or "").strip().rstrip("/")
+    api_key = (api_key or "").strip()
+    site = (site or DEFAULT_SITE).strip()
     session = async_get_clientsession(hass, verify_ssl)
-    url = f"https://{host.strip().rstrip('/')}/proxy/network/api/s/{site}/stat/device"
-    headers = {"X-API-Key": api_key.strip()}
+    url = f"https://{host}/proxy/network/api/s/{site}/stat/device"
+    headers = {"X-API-Key": api_key}
     async with session.get(url, headers=headers) as resp:
+        text = await resp.text()
         if resp.status != 200:
-            text = await resp.text()
             raise Exception(f"HTTP {resp.status}: {text[:200]}")
         js = await resp.json(content_type=None)
         if not isinstance(js, dict) or "data" not in js:
             raise Exception("Unexpected response shape")
-
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -62,7 +64,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.warning("Validation failed: %s", e)
                 errors["base"] = "cannot_connect"
             else:
-                await self.async_set_unique_id(f"{host}-{site}")
+                unique_id = f"{host.strip().rstrip('/')}-{(site or DEFAULT_SITE).strip()}"
+                await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=f"UniFi WAN ({host})",

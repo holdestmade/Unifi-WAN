@@ -9,7 +9,9 @@
           "host": "Host / IP",
           "api_key": "API Key",
           "site": "Site",
-          "verify_ssl": "Verify SSL certificate"
+          "verify_ssl": "Verify SSL certificate",
+          "auto_speedtest": "Run speedtest automatically",
+          "auto_speedtest_minutes": "Auto speedtest interval (minutes)"
         }
       }
     },
@@ -24,13 +26,15 @@
     "step": {
       "init": {
         "title": "UniFi WAN Options",
-        "description": "Polling runs against `/stat/device`. Intervals are in seconds.",
+        "description": "Polling runs against `/stat/device`. Intervals are in seconds/minutes as shown.",
         "data": {
           "host": "Host / IP",
           "api_key": "API Key",
           "site": "Site",
           "verify_ssl": "Verify SSL certificate",
-          "scan_interval": "Scan interval (s)"
+          "scan_interval": "Scan interval (s)",
+          "auto_speedtest": "Run speedtest automatically",
+          "auto_speedtest_minutes": "Auto speedtest interval (minutes)"
         }
       }
     }

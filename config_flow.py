@@ -16,9 +16,13 @@ from .const import (
     CONF_SITE,
     CONF_VERIFY_SSL,
     CONF_SCAN_INTERVAL,
+    CONF_AUTO_SPEEDTEST,
+    CONF_AUTO_SPEEDTEST_MINUTES,
     DEFAULT_SITE,
     DEFAULT_VERIFY_SSL,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_AUTO_SPEEDTEST,
+    DEFAULT_AUTO_SPEEDTEST_MINUTES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +52,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             api_key = user_input[CONF_API_KEY]
             site = user_input.get(CONF_SITE, DEFAULT_SITE)
             verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+            auto_enable = user_input.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST)
+            auto_minutes = int(user_input.get(CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES))
+            if auto_minutes < 1:
+                auto_minutes = 1
             try:
                 await _async_validate(self.hass, host, api_key, site, verify_ssl)
             except Exception as e:
@@ -63,6 +71,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_API_KEY: api_key,
                         CONF_SITE: site,
                         CONF_VERIFY_SSL: verify_ssl,
+                        CONF_AUTO_SPEEDTEST: auto_enable,
+                        CONF_AUTO_SPEEDTEST_MINUTES: auto_minutes,
                     },
                 )
 
@@ -72,6 +82,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_API_KEY): str,
                 vol.Optional(CONF_SITE, default=DEFAULT_SITE): str,
                 vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): bool,
+                vol.Optional(CONF_AUTO_SPEEDTEST, default=DEFAULT_AUTO_SPEEDTEST): bool,
+                vol.Optional(CONF_AUTO_SPEEDTEST_MINUTES, default=DEFAULT_AUTO_SPEEDTEST_MINUTES): int,
             }
         )
         return self.async_show_form(step_id="user", data_schema=data_schema, errors=errors)
@@ -96,18 +108,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             try:
                 await _async_validate(
                     self.hass,
-                    user_input.get(CONF_HOST, self.entry.data.get(CONF_HOST)),
-                    user_input.get(CONF_API_KEY, self.entry.data.get(CONF_API_KEY)),
-                    user_input.get(CONF_SITE, self.entry.data.get(CONF_SITE, DEFAULT_SITE)),
-                    user_input.get(CONF_VERIFY_SSL, self.entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)),
+                    user_input.get(CONF_HOST, self.entry.options.get(CONF_HOST, self.entry.data.get(CONF_HOST))),
+                    user_input.get(CONF_API_KEY, self.entry.options.get(CONF_API_KEY, self.entry.data.get(CONF_API_KEY))),
+                    user_input.get(CONF_SITE, self.entry.options.get(CONF_SITE, self.entry.data.get(CONF_SITE, DEFAULT_SITE))),
+                    user_input.get(CONF_VERIFY_SSL, self.entry.options.get(CONF_VERIFY_SSL, self.entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))),
                 )
             except Exception as e:
                 _LOGGER.warning("Options validation failed: %s", e)
-                return self.async_show_form(
-                    step_id="init",
-                    data_schema=self._schema(),
-                    errors={"base": "cannot_connect"},
-                )
+                return self.async_show_form(step_id="init", data_schema=self._schema(), errors={"base": "cannot_connect"})
             return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(step_id="init", data_schema=self._schema())
@@ -120,16 +128,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_HOST, default=opts.get(CONF_HOST, data.get(CONF_HOST, ""))): str,
                 vol.Optional(CONF_API_KEY, default=opts.get(CONF_API_KEY, data.get(CONF_API_KEY, ""))): str,
                 vol.Optional(CONF_SITE, default=opts.get(CONF_SITE, data.get(CONF_SITE, DEFAULT_SITE))): str,
-                vol.Optional(
-                    CONF_VERIFY_SSL,
-                    default=opts.get(
-                        CONF_VERIFY_SSL,
-                        data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
-                    ),
-                ): bool,
-                vol.Optional(
-                    CONF_SCAN_INTERVAL,
-                    default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): int,
+                vol.Optional(CONF_VERIFY_SSL, default=opts.get(CONF_VERIFY_SSL, data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))): bool,
+                vol.Optional(CONF_SCAN_INTERVAL, default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): int,
+                vol.Optional(CONF_AUTO_SPEEDTEST, default=opts.get(CONF_AUTO_SPEEDTEST, data.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST))): bool,
+                vol.Optional(CONF_AUTO_SPEEDTEST_MINUTES, default=opts.get(CONF_AUTO_SPEEDTEST_MINUTES, data.get(CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES))): int,
             }
         )

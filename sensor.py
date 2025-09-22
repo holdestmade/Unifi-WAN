@@ -174,6 +174,9 @@ class UniFiSpeedtestDown(UniFiBaseEntity):
         if not gw:
             return None
         uplink = gw.get("uplink") or {}
+        ts = int(uplink.get("speedtest_lastrun") or 0)
+        if ts == 0:
+            return None
         return float(uplink.get("xput_down", 0))
 
     @property
@@ -182,10 +185,14 @@ class UniFiSpeedtestDown(UniFiBaseEntity):
         if not gw:
             return None
         uplink = gw.get("uplink") or {}
+        ts = int(uplink.get("speedtest_lastrun") or 0)
+        if ts == 0:
+            return {"status": None, "ping_ms": None}
         return {
             "status": uplink.get("speedtest_status"),
             "ping_ms": uplink.get("speedtest_ping"),
         }
+
 
 
 class UniFiSpeedtestUp(UniFiBaseEntity):
@@ -205,6 +212,9 @@ class UniFiSpeedtestUp(UniFiBaseEntity):
         if not gw:
             return None
         uplink = gw.get("uplink") or {}
+        ts = int(uplink.get("speedtest_lastrun") or 0)
+        if ts == 0:
+            return None
         return float(uplink.get("xput_up", 0))
 
 
@@ -224,6 +234,9 @@ class UniFiSpeedtestPing(UniFiBaseEntity):
         if not gw:
             return None
         uplink = gw.get("uplink") or {}
+        ts = int(uplink.get("speedtest_lastrun") or 0)
+        if ts == 0:
+            return None
         return float(uplink.get("speedtest_ping", 0))
 
 
@@ -241,14 +254,13 @@ class UniFiSpeedtestLastRun(UniFiBaseEntity):
         if not gw:
             return None
         uplink = gw.get("uplink") or {}
-        ts = uplink.get("speedtest_lastrun")
-        if ts is None:
+        ts = int(uplink.get("speedtest_lastrun") or 0)
+        if ts == 0:
             return None
         try:
-            return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
         except Exception:
             return None
-
 
 class UniFiActiveWanName(CoordinatorEntity, SensorEntity):
     _attr_name = "UniFi Active WAN Name"
@@ -281,7 +293,6 @@ class UniFiActiveWanName(CoordinatorEntity, SensorEntity):
         data = self.coordinator.data
         if not data or "data" not in data:
             return None
-        # find gateway device
         gw = None
         for t in ("udm", "ugw"):
             for dev in data["data"]:

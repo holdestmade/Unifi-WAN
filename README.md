@@ -29,6 +29,8 @@ Work in Progress
 - **Site** (default `default`)
 - **Verify SSL certificate**
 - **Scan interval (s)** (Maximum API calls allowed is 100 per minute)
+- **Run speedtest automatically** — on/off (default **on**)
+- **Auto speedtest interval (minutes)** — default **60**
 
 Changing any option revalidates against `/stat/device` and reloads the entry.
 

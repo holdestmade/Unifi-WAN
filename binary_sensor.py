@@ -10,6 +10,8 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
     CONF_HOST,
@@ -20,19 +22,16 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    data = hass.data[DOMAIN][entry.entry_id]
-    device = data["device_coordinator"]
-    host = entry.options.get(CONF_HOST, entry.data.get(CONF_HOST))
-
-    if host is None:
-        _LOGGER.warning("Host is missing from config entry %s", entry.entry_id)
-        host = "unknown"
+    shared = hass.data[DOMAIN][entry.entry_id]
+    device = shared["device_coordinator"]
+    host = entry.options.get(CONF_HOST, entry.data.get(CONF_HOST)) or "unknown"
 
     entities = [
         UniFiWanInternet(device, entry, host),
         UniFiActiveWanUp(device, entry, host),
         UniFiWan1Link(device, entry, host),
         UniFiWan2Link(device, entry, host),
+        UniFiSpeedtestInProgress(shared, host),
     ]
     async_add_entities(entities)
 
@@ -134,3 +133,47 @@ class UniFiWan2Link(UniFiBaseBinary):
             return False
         w2 = gw.get("wan2") or {}
         return bool(w2.get("up"))
+
+
+class UniFiSpeedtestInProgress(BinarySensorEntity):
+    _attr_name = "UniFi Speedtest In Progress"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = "mdi:progress-clock"
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, shared, host):
+        self._shared = shared
+        self._host = host
+        self._unsub = None
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_speedtest_in_progress"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._host)},
+            "name": f"UniFi WAN ({self._host})",
+            "manufacturer": "Ubiquiti",
+            "model": "UDM/UGW",
+            "configuration_url": f"https://{self._host}/",
+        }
+
+    async def async_added_to_hass(self):
+        signal = self._shared["speedtest_running_signal"]
+        self._unsub = async_dispatcher_connect(self.hass, signal, self._signal_update)
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self):
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
+
+    def _signal_update(self):
+        self.schedule_update_ha_state()
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._shared["get_speedtest_running"]())

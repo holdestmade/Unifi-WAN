@@ -27,7 +27,7 @@ def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     shared = hass.data[DOMAIN][entry.entry_id]
     device_coord = shared["device_coordinator"]
-    meta = shared.get("dev_meta", {})  # <-- NEW
+    meta = shared.get("dev_meta", {})
     host = entry.options.get(CONF_HOST, entry.data.get(CONF_HOST)) or "unknown"
     site = entry.options.get(CONF_SITE, entry.data.get(CONF_SITE, "default")) or "default"
     devname = f"UniFi WAN ({host} / {site})"

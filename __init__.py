@@ -117,11 +117,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await device_coordinator.async_config_entry_first_refresh()
 
-    # --- NEW: capture device metadata for the device card (sw_version/model/MAC) ---
     dev_meta = {"sw_version": None, "model": "UDM/UGW", "mac": None}
     gw = _pick_gateway(device_coordinator.data)
     if gw:
-        # UniFi shows firmware as "version" (sometimes "firmware_version" on some platforms)
         dev_meta["sw_version"] = gw.get("version") or gw.get("firmware_version")
         dev_meta["model"] = gw.get("model") or gw.get("type") or "UDM/UGW"
         dev_meta["mac"] = gw.get("mac")
@@ -192,7 +190,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "device_coordinator": device_coordinator,
         "host": host,
         "site": site,
-        "dev_meta": dev_meta,  # <-- NEW: shared device metadata
+        "dev_meta": dev_meta,
         "auto_unsub": unsub_auto,
         "auto_enabled": auto_enabled_runtime,
         "enable_auto": lambda: (_schedule_auto(), hass.data[DOMAIN][entry.entry_id].update({"auto_enabled": True})),

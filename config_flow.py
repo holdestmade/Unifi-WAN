@@ -7,7 +7,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import (
     DOMAIN,
@@ -33,7 +33,7 @@ async def _async_validate(hass: HomeAssistant, host: str, api_key: str, site: st
     host = (host or "").strip().rstrip("/")
     api_key = (api_key or "").strip()
     site = (site or DEFAULT_SITE).strip()
-    session = async_get_clientsession(hass, verify_ssl)
+    session = async_create_clientsession(hass, verify_ssl=verify_ssl)
     url = f"https://{host}/proxy/network/api/s/{site}/stat/device"
     headers = {"X-API-Key": api_key}
     async with session.get(url, headers=headers) as resp:

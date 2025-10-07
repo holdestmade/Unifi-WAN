@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, CALLBACK_TYPE
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -41,7 +41,7 @@ class UnifiWanClient:
         self.api_key = (api_key or "").strip()
         self.site = site or DEFAULT_SITE
         self.verify_ssl = bool(verify_ssl)
-        self._session = async_get_clientsession(hass, self.verify_ssl)
+        self._session = async_create_clientsession(hass, verify_ssl=self.verify_ssl)
 
     def _url(self, path: str) -> str:
         return f"https://{self.host}/proxy/network/api/s/{self.site}/{path}"

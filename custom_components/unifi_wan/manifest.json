@@ -1,7 +1,7 @@
 {
   "domain": "unifi_wan",
   "name": "UniFi WAN",
-  "version": "0.5.5",
+  "version": "0.5.7",
   "documentation": "https://github.com/unifi-wan",
   "issue_tracker": "https://github.com/unifi-wan/issues",
   "codeowners": ["@holdestmade"],

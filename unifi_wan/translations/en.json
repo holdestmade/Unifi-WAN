@@ -1,0 +1,42 @@
+{
+  "title": "UniFi WAN",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to UniFi Console",
+        "description": "Enter your UniFi OS console details. Create an API key under **Settings → System → Advanced → API Keys** on your UDM/UDR.",
+        "data": {
+          "host": "Host / IP",
+          "api_key": "API Key",
+          "site": "Site",
+          "verify_ssl": "Verify SSL certificate",
+          "auto_speedtest": "Run speedtest automatically",
+          "auto_speedtest_minutes": "Auto speedtest interval (minutes)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect or invalid API key. Check host/site, API key, and SSL settings."
+    },
+    "abort": {
+      "already_configured": "This console/site is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "UniFi WAN Options",
+        "description": "Polling runs against `/stat/device`. Intervals are in seconds/minutes as shown.",
+        "data": {
+          "host": "Host / IP",
+          "api_key": "API Key",
+          "site": "Site",
+          "verify_ssl": "Verify SSL certificate",
+          "scan_interval": "Scan interval (s)",
+          "auto_speedtest": "Run speedtest automatically",
+          "auto_speedtest_minutes": "Auto speedtest interval (minutes)"
+        }
+      }
+    }
+  }
+}

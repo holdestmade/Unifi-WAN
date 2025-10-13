@@ -19,12 +19,14 @@ Work in Progress
 - UniFi Speedtest Ping — `uplink.speedtest_ping` (ms)
 - UniFi Speedtest Last Run — `uplink.speedtest_lastrun` (timestamp)
 - UniFi Active WAN Name — `uplink.name` (e.g., `ppp0`, `WAN`, `WAN2`)
+- UniFi Active WAN ID — heuristically derived (`WAN1` / `WAN2` / `WAN`)
 
 **Binary sensors**
 - UniFi WAN Internet — `uplink.up`
 - UniFi Active WAN Up — same as above (kept for compatibility)
 - UniFi WAN1 Link — `gateway.wan1.up`
 - UniFi WAN2 Link — `gateway.wan2.up`
+- UniFi Speedtest In Progress — integration-triggered speedtest running state
 
 ## Options
 - **Host / IP**

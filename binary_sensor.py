@@ -8,6 +8,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant
+    # noqa: E402
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -28,6 +29,22 @@ def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         for dev in data:
             if isinstance(dev, dict) and dev.get("type") == t:
                 return dev
+    return None
+
+
+def _wan_section(gw: dict[str, Any] | None, which: str) -> dict[str, Any] | None:
+    """
+    Return the appropriate WAN section from the gateway dict.
+
+    - Primary: try 'wan1' then fallback to legacy 'wan'
+    - Secondary: 'wan2'
+    """
+    if not gw:
+        return None
+    if which == "wan1":
+        return gw.get("wan1") or gw.get("wan")
+    if which == "wan2":
+        return gw.get("wan2")
     return None
 
 
@@ -119,7 +136,19 @@ class UniFiWan1Link(UniFiBaseBinary):
     @property
     def is_on(self):
         gw = _pick_gateway(self.coordinator.data)
-        return bool((gw or {}).get("wan1", {}).get("up"))
+        s = _wan_section(gw, "wan1")
+        return bool((s or {}).get("up"))
+
+    @property
+    def extra_state_attributes(self):
+        gw = _pick_gateway(self.coordinator.data)
+        s = _wan_section(gw, "wan1") or {}
+        return {
+            "source_section": "wan1" if "wan1" in (gw or {}) else ("wan" if "wan" in (gw or {}) else None),
+            "ifname": s.get("ifname"),
+            "ip": s.get("ip"),
+            "type": s.get("type"),
+        }
 
 
 class UniFiWan2Link(UniFiBaseBinary):
@@ -133,7 +162,19 @@ class UniFiWan2Link(UniFiBaseBinary):
     @property
     def is_on(self):
         gw = _pick_gateway(self.coordinator.data)
-        return bool((gw or {}).get("wan2", {}).get("up"))
+        s = _wan_section(gw, "wan2")
+        return bool((s or {}).get("up"))
+
+    @property
+    def extra_state_attributes(self):
+        gw = _pick_gateway(self.coordinator.data)
+        s = _wan_section(gw, "wan2") or {}
+        return {
+            "source_section": "wan2" if s else None,
+            "ifname": s.get("ifname"),
+            "ip": s.get("ip"),
+            "type": s.get("type"),
+        }
 
 
 class UniFiSpeedtestInProgress(BinarySensorEntity):

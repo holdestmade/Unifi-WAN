@@ -40,9 +40,9 @@ Changing any option revalidates against `/stat/device` and reloads the entry.
 ## Install
 
 HACS
-Add this repository via HACS custom repositories for easy update
+1. Add this repository via HACS custom repositories for easy update
 https://github.com/holdestmade/Unifi-WAN
-Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.
+2. Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.
 
 Manual
 1. Copy `custom_components/unifi_wan/` into your Home Assistant `config` folder.

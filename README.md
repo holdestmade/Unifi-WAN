@@ -12,10 +12,10 @@ Work in Progress
 **Sensors**
 - UniFi WAN IPv4 — from `gateway.uplink.ip`
 - UniFi WAN IPv6 — from `gateway.uplink.ip6` (if present)
-- UniFi WAN Download — `uplink.rx_bytes-r` → Mbit/s
-- UniFi WAN Upload — `uplink.tx_bytes-r` → Mbit/s
-- UniFi Speedtest Download — `uplink.xput_down` (Mbps)
-- UniFi Speedtest Upload — `uplink.xput_up` (Mbps)
+- UniFi WAN Download — `uplink.rx_bytes-r` → (Mbit/s)
+- UniFi WAN Upload — `uplink.tx_bytes-r` → (Mbit/s)
+- UniFi Speedtest Download — `uplink.xput_down` (Mbit/s)
+- UniFi Speedtest Upload — `uplink.xput_up` (Mbit/s)
 - UniFi Speedtest Ping — `uplink.speedtest_ping` (ms)
 - UniFi Speedtest Last Run — `uplink.speedtest_lastrun` (timestamp)
 - UniFi Active WAN Name — `uplink.name` (e.g., `ppp0`, `WAN`, `WAN2`)

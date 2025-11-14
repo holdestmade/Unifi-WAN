@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -34,7 +35,7 @@ class UniFiAutoSpeedtestSwitch(SwitchEntity):
 
     @property
     def device_info(self):
-        info = {
+        info: dict[str, Any] = {
             "identifiers": {(DOMAIN, self._host, self._site)},
             "name": self._devname,
             "manufacturer": "Ubiquiti",

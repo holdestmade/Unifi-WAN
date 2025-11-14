@@ -3,38 +3,40 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to UniFi Console",
-        "description": "Enter your UniFi OS console details. Create an API key under **Settings → System → Advanced → API Keys** on your UDM/UDR.",
+        "title": "UniFi WAN",
+        "description": "Enter your UniFi OS connection details.",
         "data": {
           "host": "Host / IP",
           "api_key": "API Key",
           "site": "Site",
-          "verify_ssl": "Verify SSL certificate",
-          "auto_speedtest": "Run speedtest automatically",
-          "auto_speedtest_minutes": "Auto speedtest interval (minutes)"
+          "verify_ssl": "Verify SSL Certificate",
+          "auto_speedtest": "Run Speedtest Automatically",
+          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)",
+          "month_reset_day": "Month Reset Day"
         }
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect or invalid API key. Check host/site, API key, and SSL settings."
-    },
-    "abort": {
-      "already_configured": "This console/site is already configured."
+      "cannot_connect": "Cannot connect. Check Host/IP, API key and Site.",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "UniFi WAN Options",
-        "description": "Polling runs against `/stat/device`. Intervals are in seconds/minutes as shown.",
+        "description": "Adjust performance and speedtest settings.",
         "data": {
           "host": "Host / IP",
           "api_key": "API Key",
           "site": "Site",
-          "verify_ssl": "Verify SSL certificate",
-          "scan_interval": "Scan interval (s)",
-          "auto_speedtest": "Run speedtest automatically",
-          "auto_speedtest_minutes": "Auto speedtest interval (minutes)"
+          "verify_ssl": "Verify SSL Certificate",
+          "scan_interval": "Scan Interval (seconds)",
+          "rate_interval_seconds": "Rate Interval (seconds)",
+          "auto_speedtest": "Run Speedtest Automatically",
+          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)",
+          "month_reset_day": "Month Reset Day"
         }
       }
     }

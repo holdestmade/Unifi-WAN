@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 from typing import Any
 
@@ -55,7 +56,7 @@ class RunSpeedtestButton(CoordinatorEntity, ButtonEntity):
 
     @property
     def device_info(self):
-        info = {
+        info: dict[str, Any] = {
             "identifiers": {(DOMAIN, self._host, self._site)},
             "name": self._devname,
             "manufacturer": "Ubiquiti",

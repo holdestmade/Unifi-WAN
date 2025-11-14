@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, CALLBACK_TYPE
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -20,11 +20,13 @@ from .const import (
     CONF_SITE,
     CONF_VERIFY_SSL,
     CONF_SCAN_INTERVAL,
+    CONF_RATE_INTERVAL,
     CONF_AUTO_SPEEDTEST,
     CONF_AUTO_SPEEDTEST_MINUTES,
     DEFAULT_SITE,
     DEFAULT_VERIFY_SSL,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_RATE_INTERVAL,
     DEFAULT_AUTO_SPEEDTEST,
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
     LEGACY_CONF_DEVICE_INTERVAL,
@@ -35,13 +37,15 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class UnifiWanClient:
+    """Simple HTTP client for UniFi Network endpoints needed by this integration."""
+
     def __init__(self, hass: HomeAssistant, host: str, api_key: str, site: str, verify_ssl: bool):
         self._hass = hass
         self.host = (host or "").strip().rstrip("/")
         self.api_key = (api_key or "").strip()
         self.site = site or DEFAULT_SITE
         self.verify_ssl = bool(verify_ssl)
-        self._session = async_create_clientsession(hass, verify_ssl=self.verify_ssl)
+        self._session = async_get_clientsession(hass, self.verify_ssl)
 
     def _url(self, path: str) -> str:
         return f"https://{self.host}/proxy/network/api/s/{self.site}/{path}"
@@ -68,13 +72,20 @@ class UnifiWanClient:
                 return {"ok": resp.status == 200, "text": text[:200]}
 
     async def get_devices(self) -> dict:
+        """Heavy: returns all devices for the site."""
         return await self.get_json("stat/device")
 
+    async def get_device(self, mac: str) -> dict:
+        """Lightweight: returns only one device by MAC."""
+        return await self.get_json(f"stat/device/{mac}")
+
     async def run_speedtest(self, mac: str) -> dict:
+        """Trigger a speedtest on the given gateway MAC."""
         return await self.post_json("cmd/devmgr", {"cmd": "speedtest", "mac": mac})
 
 
 def _pick_gateway(payload: dict[str, Any] | None) -> Optional[dict[str, Any]]:
+    """Return a single UDM/UGW gateway from a stat/device payload."""
     if not isinstance(payload, dict):
         return None
     data = payload.get("data")
@@ -96,10 +107,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     site = options.get(CONF_SITE, data.get(CONF_SITE, DEFAULT_SITE))
     verify_ssl = options.get(CONF_VERIFY_SSL, data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
 
-    scan_seconds = int(options.get(CONF_SCAN_INTERVAL, options.get(LEGACY_CONF_DEVICE_INTERVAL, DEFAULT_SCAN_INTERVAL)))
+    scan_seconds = int(
+        options.get(
+            CONF_SCAN_INTERVAL,
+            options.get(LEGACY_CONF_DEVICE_INTERVAL, DEFAULT_SCAN_INTERVAL),
+        )
+    )
+    rate_seconds = int(options.get(CONF_RATE_INTERVAL, DEFAULT_RATE_INTERVAL))
+    if rate_seconds < 1:
+        rate_seconds = 1
 
-    auto_enabled_default = bool(options.get(CONF_AUTO_SPEEDTEST, data.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST)))
-    auto_minutes = int(options.get(CONF_AUTO_SPEEDTEST_MINUTES, data.get(CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES)))
+    auto_enabled_default = bool(
+        options.get(CONF_AUTO_SPEEDTEST, data.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST))
+    )
+    auto_minutes = int(
+        options.get(
+            CONF_AUTO_SPEEDTEST_MINUTES,
+            data.get(CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES),
+        )
+    )
     if auto_minutes < 1:
         auto_minutes = 1
 
@@ -117,12 +143,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await device_coordinator.async_config_entry_first_refresh()
 
-    dev_meta = {"sw_version": None, "model": "UDM/UGW", "mac": None}
+    dev_meta: dict[str, Any] = {"sw_version": None, "model": "UDM/UGW", "mac": None}
     gw = _pick_gateway(device_coordinator.data)
     if gw:
         dev_meta["sw_version"] = gw.get("version") or gw.get("firmware_version")
         dev_meta["model"] = gw.get("model") or gw.get("type") or "UDM/UGW"
         dev_meta["mac"] = gw.get("mac")
+
+    rates_coordinator: Optional[DataUpdateCoordinator] = None
+    if dev_meta["mac"]:
+        mac = dev_meta["mac"]
+
+        async def _update_rates():
+            return await client.get_device(mac)
+
+        rates_coordinator = DataUpdateCoordinator(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_rates",
+            update_method=_update_rates,
+            update_interval=timedelta(seconds=rate_seconds),
+        )
+        await rates_coordinator.async_config_entry_first_refresh()
 
     entry_signal = f"{SIGNAL_SPEEDTEST_RUNNING}_{entry.entry_id}"
     speedtest_running: bool = False
@@ -140,27 +182,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _dispatch_running()
 
     async def _run_speedtest_now() -> None:
-        gw = _pick_gateway(device_coordinator.data)
-        if not gw:
+        """Trigger a speedtest on the active gateway."""
+        gw_local = _pick_gateway(device_coordinator.data)
+        if not gw_local:
             _LOGGER.debug("Speedtest: no gateway yet, refreshing devices")
             await device_coordinator.async_request_refresh()
-            gw = _pick_gateway(device_coordinator.data)
-            if not gw:
+            gw_local = _pick_gateway(device_coordinator.data)
+            if not gw_local:
                 _LOGGER.warning("Speedtest: no gateway device found; skipping")
                 return
-        mac = gw.get("mac")
-        if not mac:
+        mac_local = gw_local.get("mac")
+        if not mac_local:
             _LOGGER.warning("Speedtest: gateway MAC not found; skipping")
             return
 
         await set_speedtest_running(True)
         try:
-            await client.run_speedtest(mac)
+            await client.run_speedtest(mac_local)
         except Exception as e:
             _LOGGER.warning("Speedtest failed: %s", e)
         finally:
             await asyncio.sleep(8)
             await device_coordinator.async_request_refresh()
+            if rates_coordinator:
+                await rates_coordinator.async_request_refresh()
             await set_speedtest_running(False)
 
     async def _auto_speedtest_callback(_now) -> None:
@@ -172,7 +217,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         nonlocal unsub_auto
         if unsub_auto:
             return
-        unsub_auto = async_track_time_interval(hass, _auto_speedtest_callback, timedelta(minutes=auto_minutes))
+        unsub_auto = async_track_time_interval(
+            hass,
+            _auto_speedtest_callback,
+            timedelta(minutes=auto_minutes),
+        )
         _LOGGER.info("UniFi WAN: auto speedtest enabled every %s minute(s)", auto_minutes)
 
     def _unschedule_auto() -> None:
@@ -188,13 +237,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "client": client,
         "device_coordinator": device_coordinator,
+        "rates_coordinator": rates_coordinator,
         "host": host,
         "site": site,
         "dev_meta": dev_meta,
         "auto_unsub": unsub_auto,
         "auto_enabled": auto_enabled_runtime,
-        "enable_auto": lambda: (_schedule_auto(), hass.data[DOMAIN][entry.entry_id].update({"auto_enabled": True})),
-        "disable_auto": lambda: (_unschedule_auto(), hass.data[DOMAIN][entry.entry_id].update({"auto_enabled": False})),
+        "enable_auto": lambda: (
+            _schedule_auto(),
+            hass.data[DOMAIN][entry.entry_id].update({"auto_enabled": True}),
+        ),
+        "disable_auto": lambda: (
+            _unschedule_auto(),
+            hass.data[DOMAIN][entry.entry_id].update({"auto_enabled": False}),
+        ),
         "run_speedtest_now": _run_speedtest_now,
         "speedtest_running_signal": entry_signal,
         "get_speedtest_running": lambda: speedtest_running,
@@ -202,11 +258,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
     shared = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if shared and shared.get("auto_unsub"):
         shared["auto_unsub"]()
@@ -217,5 +276,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    """Handle config entry options updates by delegating to HA reload."""
+    await hass.config_entries.async_reload(entry.entry_id)

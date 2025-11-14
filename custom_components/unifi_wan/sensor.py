@@ -1,25 +1,34 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Any, Optional, Tuple
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
+    RestoreSensor,
 )
-from homeassistant.const import UnitOfDataRate, UnitOfTime
-from homeassistant.core import HomeAssistant
+from homeassistant.const import UnitOfTime, UnitOfDataRate, UnitOfInformation
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.util import dt as dt_util
 
-from .const import CONF_HOST, CONF_SITE, DOMAIN
+from .const import (
+    CONF_HOST,
+    CONF_SITE,
+    DOMAIN,
+    CONF_MONTH_RESET_DAY,
+    DEFAULT_MONTH_RESET_DAY,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Pick the primary gateway device (UDM/UGW)."""
     if not isinstance(payload, dict):
         return None
     data = payload.get("data")
@@ -50,14 +59,7 @@ def _norm(s: Optional[str]) -> str:
 
 
 def _infer_active_wan_id(gw: dict[str, Any] | None) -> Tuple[Optional[str], dict]:
-    """
-    Decide which WAN (wan1/wan2/wan) is active using several heuristics:
-    1) Match uplink.ip to wan1/wan2 ip.
-    2) Match uplink.ifname to wan1/wan2 ifname.
-    3) Match uplink.name/comment to wan1/wan2 name/comment.
-    4) Fallback to link state (up=True).
-    Returns (identifier, debug_attrs)
-    """
+    """Decide which WAN (wan1/wan2/wan) is active using several heuristics."""
     debug: dict[str, Any] = {}
     if not gw:
         return None, debug
@@ -135,32 +137,69 @@ def _infer_active_wan_id(gw: dict[str, Any] | None) -> Tuple[Optional[str], dict
     return None, debug
 
 
+def _current_billing_period_start(now: datetime, reset_day: int) -> date:
+    """Return the start date for the current billing month given a reset day."""
+    reset_day = max(1, min(reset_day, 31))
+    d = now.date()
+    if d.day >= reset_day:
+        return date(d.year, d.month, reset_day)
+    # Previous month
+    if d.month == 1:
+        return date(d.year - 1, 12, reset_day)
+    return date(d.year, d.month - 1, reset_day)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
+    """Set up UniFi WAN sensors from a config entry."""
     shared = hass.data[DOMAIN][entry.entry_id]
     device = shared["device_coordinator"]
+    rates = shared.get("rates_coordinator") or device
     meta = shared.get("dev_meta", {})
 
     host = entry.options.get(CONF_HOST, entry.data.get(CONF_HOST)) or "unknown"
     site = entry.options.get(CONF_SITE, entry.data.get(CONF_SITE, "default")) or "default"
     devname = f"UniFi WAN ({host} / {site})"
 
+    reset_day = int(
+        entry.options.get(
+            CONF_MONTH_RESET_DAY,
+            entry.data.get(CONF_MONTH_RESET_DAY, DEFAULT_MONTH_RESET_DAY),
+        )
+    )
+    if reset_day < 1:
+        reset_day = 1
+    if reset_day > 31:
+        reset_day = 31
+
     entities = [
+        # Basic link info
         UniFiWanIPv4(device, entry, host, site, devname, meta),
         UniFiWanIPv6(device, entry, host, site, devname, meta),
-        UniFiWanDownMbps(device, entry, host, site, devname, meta),
-        UniFiWanUpMbps(device, entry, host, site, devname, meta),
+        # WAN rate sensors (fast coordinator)
+        UniFiWanDownMbps(rates, entry, host, site, devname, meta),
+        UniFiWanUpMbps(rates, entry, host, site, devname, meta),
+        # Totals (MB native; UI can override to GB if desired)
+        UniFiWanDownloadToday(rates, entry, host, site, devname, meta),
+        UniFiWanUploadToday(rates, entry, host, site, devname, meta),
+        UniFiWanDownloadMonth(rates, entry, host, site, devname, meta, reset_day),
+        UniFiWanUploadMonth(rates, entry, host, site, devname, meta, reset_day),
+        # Speedtest sensors (normal cadence)
         UniFiSpeedtestDown(device, entry, host, site, devname, meta),
         UniFiSpeedtestUp(device, entry, host, site, devname, meta),
         UniFiSpeedtestPing(device, entry, host, site, devname, meta),
         UniFiSpeedtestLastRun(device, entry, host, site, devname, meta),
         UniFiActiveWanName(device, entry, host, site, devname, meta),
-        UniFiActiveWanId(device, entry, host, site, devname, meta),  # <-- NEW
+        UniFiActiveWanId(device, entry, host, site, devname, meta),
     ]
     async_add_entities(entities)
 
 
 class UniFiBaseEntity(CoordinatorEntity, SensorEntity):
-    def __init__(self, coordinator, entry: ConfigEntry, host: str, site: str, devname: str, meta: dict[str, Any]):
+    """Base entity for UniFi WAN sensors."""
+
+    def __init__(
+        self, coordinator, entry: ConfigEntry, host: str, site: str, devname: str, meta: dict[str, Any]
+    ):
         super().__init__(coordinator)
         self._entry = entry
         self._host = host
@@ -170,7 +209,7 @@ class UniFiBaseEntity(CoordinatorEntity, SensorEntity):
 
     @property
     def device_info(self):
-        info = {
+        info: dict[str, Any] = {
             "identifiers": {(DOMAIN, self._host, self._site)},
             "name": self._devname,
             "manufacturer": "Ubiquiti",
@@ -238,6 +277,16 @@ class UniFiWanDownMbps(UniFiBaseEntity):
         except Exception:
             return None
 
+    @property
+    def extra_state_attributes(self):
+        gw = _pick_gateway(self.coordinator.data) or {}
+        uplink = gw.get("uplink") or {}
+        return {
+            "raw_rx_bytes_r": uplink.get("rx_bytes-r"),
+            "uplink_ifname": uplink.get("ifname"),
+            "uplink_ip": uplink.get("ip"),
+        }
+
 
 class UniFiWanUpMbps(UniFiBaseEntity):
     _attr_name = "UniFi WAN Upload"
@@ -258,6 +307,360 @@ class UniFiWanUpMbps(UniFiBaseEntity):
             return round(float(tx_r) * 8 / 1_000_000, 2)
         except Exception:
             return None
+
+    @property
+    def extra_state_attributes(self):
+        gw = _pick_gateway(self.coordinator.data) or {}
+        uplink = gw.get("uplink") or {}
+        return {
+            "raw_tx_bytes_r": uplink.get("tx_bytes-r"),
+            "uplink_ifname": uplink.get("ifname"),
+            "uplink_ip": uplink.get("ip"),
+        }
+
+
+class _BaseTotalMB(UniFiBaseEntity, RestoreSensor):
+    """Base for MB totals (today / month) derived from rx_bytes-r / tx_bytes-r."""
+
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
+
+    def __init__(self, coordinator, entry, host, site, devname, meta, direction: str):
+        UniFiBaseEntity.__init__(self, coordinator, entry, host, site, devname, meta)
+        RestoreSensor.__init__(self)
+        self._direction = direction  # "down" or "up"
+        self._value_mb: float = 0.0
+        self._last_update: Optional[datetime] = None
+
+    @property
+    def native_value(self):
+        return round(self._value_mb, 3)
+
+    def _get_rate_bytes_per_sec(self) -> Optional[float]:
+        gw = _pick_gateway(self.coordinator.data)
+        uplink = (gw or {}).get("uplink") or {}
+        key = "rx_bytes-r" if self._direction == "down" else "tx_bytes-r"
+        val = uplink.get(key)
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except Exception:
+            return None
+
+    def _integrate(self, now: datetime):
+        rate = self._get_rate_bytes_per_sec()
+        if rate is None:
+            self._last_update = now
+            return
+
+        if self._last_update is not None:
+            delta_seconds = (now - self._last_update).total_seconds()
+        else:
+            delta_seconds = float(
+                self.coordinator.update_interval.total_seconds()
+                if self.coordinator.update_interval
+                else 0
+            )
+        if delta_seconds <= 0:
+            self._last_update = now
+            return
+
+        try:
+            bytes_delta = rate * delta_seconds
+            self._value_mb += bytes_delta / (1024 * 1024)
+        except Exception:
+            pass
+
+        self._last_update = now
+
+
+class UniFiWanDownloadToday(_BaseTotalMB):
+    _attr_name = "UniFi WAN Download Today"
+    _attr_icon = "mdi:download-circle"
+
+    def __init__(self, coordinator, entry, host, site, devname, meta):
+        super().__init__(coordinator, entry, host, site, devname, meta, "down")
+        self._day_str: str | None = None
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan_download_today_total"
+
+    async def async_added_to_hass(self):
+        await UniFiBaseEntity.async_added_to_hass(self)
+        last_state = await self.async_get_last_state()
+        now = dt_util.now()
+        today_str = now.date().isoformat()
+
+        if last_state and last_state.state not in ("unknown", "unavailable", None):
+            try:
+                self._value_mb = float(last_state.state)
+            except Exception:
+                self._value_mb = 0.0
+            self._day_str = last_state.attributes.get("day") or today_str
+            lu = last_state.attributes.get("last_update")
+            if isinstance(lu, str):
+                try:
+                    self._last_update = datetime.fromisoformat(lu)
+                except Exception:
+                    self._last_update = now
+            else:
+                self._last_update = now
+        else:
+            self._value_mb = 0.0
+            self._day_str = today_str
+            self._last_update = now
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        now = dt_util.now()
+        today_str = now.date().isoformat()
+
+        same_day = self._day_str == today_str
+        if not same_day:
+            # New day: reset
+            self._value_mb = 0.0
+            self._day_str = today_str
+            self._last_update = now
+            same_day = True  # after reset, treat as same-day for clamp logic
+
+        old_value = self._value_mb
+        self._integrate(now)
+
+        # Clamp: do not allow decrease within the same day
+        if same_day and self._value_mb < old_value:
+            self._value_mb = old_value
+
+        self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "day": self._day_str,
+            "last_update": self._last_update.isoformat() if self._last_update else None,
+        }
+
+
+class UniFiWanUploadToday(_BaseTotalMB):
+    _attr_name = "UniFi WAN Upload Today"
+    _attr_icon = "mdi:upload-circle"
+
+    def __init__(self, coordinator, entry, host, site, devname, meta):
+        super().__init__(coordinator, entry, host, site, devname, meta, "up")
+        self._day_str: str | None = None
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan_upload_today_total"
+
+    async def async_added_to_hass(self):
+        await UniFiBaseEntity.async_added_to_hass(self)
+        last_state = await self.async_get_last_state()
+        now = dt_util.now()
+        today_str = now.date().isoformat()
+
+        if last_state and last_state.state not in ("unknown", "unavailable", None):
+            try:
+                self._value_mb = float(last_state.state)
+            except Exception:
+                self._value_mb = 0.0
+            self._day_str = last_state.attributes.get("day") or today_str
+            lu = last_state.attributes.get("last_update")
+            if isinstance(lu, str):
+                try:
+                    self._last_update = datetime.fromisoformat(lu)
+                except Exception:
+                    self._last_update = now
+            else:
+                self._last_update = now
+        else:
+            self._value_mb = 0.0
+            self._day_str = today_str
+            self._last_update = now
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        now = dt_util.now()
+        today_str = now.date().isoformat()
+
+        same_day = self._day_str == today_str
+        if not same_day:
+            self._value_mb = 0.0
+            self._day_str = today_str
+            self._last_update = now
+            same_day = True
+
+        old_value = self._value_mb
+        self._integrate(now)
+
+        if same_day and self._value_mb < old_value:
+            self._value_mb = old_value
+
+        self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "day": self._day_str,
+            "last_update": self._last_update.isoformat() if self._last_update else None,
+        }
+
+
+class UniFiWanDownloadMonth(_BaseTotalMB):
+    _attr_name = "UniFi WAN Download This Month"
+    _attr_icon = "mdi:download-multiple"
+
+    def __init__(self, coordinator, entry, host, site, devname, meta, reset_day: int):
+        super().__init__(coordinator, entry, host, site, devname, meta, "down")
+        self._reset_day = max(1, min(int(reset_day), 31))
+        self._period_start: date | None = None
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan_download_month_total"
+
+    async def async_added_to_hass(self):
+        await UniFiBaseEntity.async_added_to_hass(self)
+        last_state = await self.async_get_last_state()
+        now = dt_util.now()
+        current_start = _current_billing_period_start(now, self._reset_day)
+
+        if last_state and last_state.state not in ("unknown", "unavailable", None):
+            try:
+                self._value_mb = float(last_state.state)
+            except Exception:
+                self._value_mb = 0.0
+            ps = last_state.attributes.get("period_start")
+            try:
+                self._period_start = (
+                    date.fromisoformat(ps) if isinstance(ps, str) else current_start
+                )
+            except Exception:
+                self._period_start = current_start
+            lu = last_state.attributes.get("last_update")
+            if isinstance(lu, str):
+                try:
+                    self._last_update = datetime.fromisoformat(lu)
+                except Exception:
+                    self._last_update = now
+            else:
+                self._last_update = now
+        else:
+            self._value_mb = 0.0
+            self._period_start = current_start
+            self._last_update = now
+
+        if self._period_start != current_start:
+            self._value_mb = 0.0
+            self._period_start = current_start
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        now = dt_util.now()
+        current_start = _current_billing_period_start(now, self._reset_day)
+
+        same_period = self._period_start == current_start
+        if not same_period:
+            self._value_mb = 0.0
+            self._period_start = current_start
+            self._last_update = now
+            same_period = True
+
+        old_value = self._value_mb
+        self._integrate(now)
+
+        # Clamp: do not allow decrease within the same billing period
+        if same_period and self._value_mb < old_value:
+            self._value_mb = old_value
+
+        self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "period_start": self._period_start.isoformat() if self._period_start else None,
+            "reset_day": self._reset_day,
+            "last_update": self._last_update.isoformat() if self._last_update else None,
+        }
+
+
+class UniFiWanUploadMonth(_BaseTotalMB):
+    _attr_name = "UniFi WAN Upload This Month"
+    _attr_icon = "mdi:upload-multiple"
+
+    def __init__(self, coordinator, entry, host, site, devname, meta, reset_day: int):
+        super().__init__(coordinator, entry, host, site, devname, meta, "up")
+        self._reset_day = max(1, min(int(reset_day), 31))
+        self._period_start: date | None = None
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan_upload_month_total"
+
+    async def async_added_to_hass(self):
+        await UniFiBaseEntity.async_added_to_hass(self)
+        last_state = await self.async_get_last_state()
+        now = dt_util.now()
+        current_start = _current_billing_period_start(now, self._reset_day)
+
+        if last_state and last_state.state not in ("unknown", "unavailable", None):
+            try:
+                self._value_mb = float(last_state.state)
+            except Exception:
+                self._value_mb = 0.0
+            ps = last_state.attributes.get("period_start")
+            try:
+                self._period_start = (
+                    date.fromisoformat(ps) if isinstance(ps, str) else current_start
+                )
+            except Exception:
+                self._period_start = current_start
+            lu = last_state.attributes.get("last_update")
+            if isinstance(lu, str):
+                try:
+                    self._last_update = datetime.fromisoformat(lu)
+                except Exception:
+                    self._last_update = now
+            else:
+                self._last_update = now
+        else:
+            self._value_mb = 0.0
+            self._period_start = current_start
+            self._last_update = now
+
+        if self._period_start != current_start:
+            self._value_mb = 0.0
+            self._period_start = current_start
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        now = dt_util.now()
+        current_start = _current_billing_period_start(now, self._reset_day)
+
+        same_period = self._period_start == current_start
+        if not same_period:
+            self._value_mb = 0.0
+            self._period_start = current_start
+            self._last_update = now
+            same_period = True
+
+        old_value = self._value_mb
+        self._integrate(now)
+
+        if same_period and self._value_mb < old_value:
+            self._value_mb = old_value
+
+        self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "period_start": self._period_start.isoformat() if self._period_start else None,
+            "reset_day": self._reset_day,
+            "last_update": self._last_update.isoformat() if self._last_update else None,
+        }
 
 
 class UniFiSpeedtestDown(UniFiBaseEntity):
@@ -325,6 +728,7 @@ class UniFiSpeedtestPing(UniFiBaseEntity):
     _attr_native_unit_of_measurement = UnitOfTime.MILLISECONDS
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_device_class = SensorDeviceClass.DURATION
+    _attr_icon = "mdi:timer"
 
     @property
     def unique_id(self):
@@ -346,6 +750,7 @@ class UniFiSpeedtestPing(UniFiBaseEntity):
 class UniFiSpeedtestLastRun(UniFiBaseEntity):
     _attr_name = "UniFi Speedtest Last Run"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:clock-outline"
 
     @property
     def unique_id(self):
@@ -365,6 +770,7 @@ class UniFiSpeedtestLastRun(UniFiBaseEntity):
 
 class UniFiActiveWanName(UniFiBaseEntity):
     _attr_name = "UniFi Active WAN Name"
+    _attr_icon = "mdi:wan"
 
     @property
     def unique_id(self):
@@ -394,6 +800,7 @@ class UniFiActiveWanName(UniFiBaseEntity):
 
 class UniFiActiveWanId(UniFiBaseEntity):
     _attr_name = "UniFi Active WAN ID"
+    _attr_icon = "mdi:numeric"
 
     @property
     def unique_id(self):
@@ -409,8 +816,7 @@ class UniFiActiveWanId(UniFiBaseEntity):
     def extra_state_attributes(self):
         gw = _pick_gateway(self.coordinator.data)
         wan_id, dbg = _infer_active_wan_id(gw)
-        # also expose the matched section details
-        sec = {}
+        sec: dict[str, Any] = {}
         if wan_id == "WAN1":
             sec = _wan_section(gw, "wan1") or {}
         elif wan_id == "WAN2":
@@ -418,7 +824,7 @@ class UniFiActiveWanId(UniFiBaseEntity):
         elif wan_id == "WAN":
             sec = _wan_section(gw, "wan") or {}
 
-        attrs = {
+        return {
             "source_section": dbg.get("match"),
             "uplink_ip": dbg.get("uplink_ip"),
             "uplink_ifname": dbg.get("uplink_ifname"),
@@ -429,4 +835,3 @@ class UniFiActiveWanId(UniFiBaseEntity):
             "section_type": sec.get("type"),
             "section_up": sec.get("up"),
         }
-        return attrs

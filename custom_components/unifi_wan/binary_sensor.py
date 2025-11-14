@@ -76,7 +76,7 @@ class UniFiBaseBinary(CoordinatorEntity, BinarySensorEntity):
 
     @property
     def device_info(self):
-        info = {
+        info: dict[str, Any] = {
             "identifiers": {(DOMAIN, self._host, self._site)},
             "name": self._devname,
             "manufacturer": "Ubiquiti",
@@ -143,7 +143,7 @@ class UniFiWan1Link(UniFiBaseBinary):
         gw = _pick_gateway(self.coordinator.data)
         s = _wan_section(gw, "wan1") or {}
         return {
-            "source_section": "wan1" if "wan1" in (gw or {}) else ("wan" if "wan" in (gw or {}) else None),
+            "source_section": "wan1" if gw and "wan1" in gw else ("wan" if gw and "wan" in gw else None),
             "ifname": s.get("ifname"),
             "ip": s.get("ip"),
             "type": s.get("type"),
@@ -197,7 +197,7 @@ class UniFiSpeedtestInProgress(BinarySensorEntity):
 
     @property
     def device_info(self):
-        info = {
+        info: dict[str, Any] = {
             "identifiers": {(DOMAIN, self._host, self._site)},
             "name": self._devname,
             "manufacturer": "Ubiquiti",

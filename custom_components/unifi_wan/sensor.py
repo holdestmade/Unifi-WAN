@@ -316,8 +316,8 @@ class _BaseTotalMB(UniFiBaseEntity, RestoreSensor):
     Logic:
       - Read cumulative counter from uplink: rx_bytes or tx_bytes
       - Keep a per-entity baseline "base_bytes" for the period
-      - Total = max(0, current_bytes - base_bytes) / (1024*1024)
-      - If counter ever goes backwards -> treat as reset and rebase to 0
+      - Total = offset_mb + max(0, current_bytes - base_bytes) / (1024*1024)
+      - If counter ever goes backwards -> keep the running total and move the baseline forward
     """
 
     _attr_state_class = SensorStateClass.TOTAL
@@ -329,6 +329,7 @@ class _BaseTotalMB(UniFiBaseEntity, RestoreSensor):
         RestoreSensor.__init__(self)
         self._direction = direction
         self._value_mb: float = 0.0
+        self._value_offset_mb: float = 0.0
         self._base_bytes: Optional[int] = None
 
     @property
@@ -355,16 +356,17 @@ class _BaseTotalMB(UniFiBaseEntity, RestoreSensor):
 
         if self._base_bytes is None:
             self._base_bytes = current
-            self._value_mb = 0.0
+            self._value_mb = self._value_offset_mb
             return
 
         if current < self._base_bytes:
             self._base_bytes = current
-            self._value_mb = 0.0
+            self._value_offset_mb = self._value_mb
+            self._value_mb = self._value_offset_mb
             return
 
         delta_bytes = current - self._base_bytes
-        new_value = max(0.0, delta_bytes / (1024 * 1024))
+        new_value = self._value_offset_mb + max(0.0, delta_bytes / (1024 * 1024))
         if new_value >= self._value_mb:
             self._value_mb = new_value
 
@@ -393,6 +395,12 @@ class UniFiWanDownloadToday(_BaseTotalMB):
             except Exception:
                 self._value_mb = 0.0
             self._day_str = last_state.attributes.get("day") or today_str
+            offset = last_state.attributes.get("offset_mb")
+            if offset is not None:
+                try:
+                    self._value_offset_mb = float(offset)
+                except Exception:
+                    self._value_offset_mb = 0.0
             base = last_state.attributes.get("base_bytes")
             if base is not None:
                 try:
@@ -402,6 +410,7 @@ class UniFiWanDownloadToday(_BaseTotalMB):
         else:
             self._value_mb = 0.0
             self._day_str = today_str
+            self._value_offset_mb = 0.0
             self._base_bytes = None
 
     @callback
@@ -413,6 +422,7 @@ class UniFiWanDownloadToday(_BaseTotalMB):
             self._day_str = today_str
             self._base_bytes = None
             self._value_mb = 0.0
+            self._value_offset_mb = 0.0
 
         self._update_from_counter()
         self.async_write_ha_state()
@@ -422,6 +432,7 @@ class UniFiWanDownloadToday(_BaseTotalMB):
         return {
             "day": self._day_str,
             "base_bytes": self._base_bytes,
+            "offset_mb": self._value_offset_mb,
         }
 
 
@@ -449,6 +460,12 @@ class UniFiWanUploadToday(_BaseTotalMB):
             except Exception:
                 self._value_mb = 0.0
             self._day_str = last_state.attributes.get("day") or today_str
+            offset = last_state.attributes.get("offset_mb")
+            if offset is not None:
+                try:
+                    self._value_offset_mb = float(offset)
+                except Exception:
+                    self._value_offset_mb = 0.0
             base = last_state.attributes.get("base_bytes")
             if base is not None:
                 try:
@@ -458,6 +475,7 @@ class UniFiWanUploadToday(_BaseTotalMB):
         else:
             self._value_mb = 0.0
             self._day_str = today_str
+            self._value_offset_mb = 0.0
             self._base_bytes = None
 
     @callback
@@ -469,6 +487,7 @@ class UniFiWanUploadToday(_BaseTotalMB):
             self._day_str = today_str
             self._base_bytes = None
             self._value_mb = 0.0
+            self._value_offset_mb = 0.0
 
         self._update_from_counter()
         self.async_write_ha_state()
@@ -478,6 +497,7 @@ class UniFiWanUploadToday(_BaseTotalMB):
         return {
             "day": self._day_str,
             "base_bytes": self._base_bytes,
+            "offset_mb": self._value_offset_mb,
         }
 
 
@@ -512,6 +532,12 @@ class UniFiWanDownloadMonth(_BaseTotalMB):
                 )
             except Exception:
                 self._period_start = current_start
+            offset = last_state.attributes.get("offset_mb")
+            if offset is not None:
+                try:
+                    self._value_offset_mb = float(offset)
+                except Exception:
+                    self._value_offset_mb = 0.0
             base = last_state.attributes.get("base_bytes")
             if base is not None:
                 try:
@@ -521,12 +547,14 @@ class UniFiWanDownloadMonth(_BaseTotalMB):
         else:
             self._value_mb = 0.0
             self._period_start = current_start
+            self._value_offset_mb = 0.0
             self._base_bytes = None
 
         if self._period_start != current_start:
             self._period_start = current_start
             self._base_bytes = None
             self._value_mb = 0.0
+            self._value_offset_mb = 0.0
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -537,6 +565,7 @@ class UniFiWanDownloadMonth(_BaseTotalMB):
             self._period_start = current_start
             self._base_bytes = None
             self._value_mb = 0.0
+            self._value_offset_mb = 0.0
 
         self._update_from_counter()
         self.async_write_ha_state()
@@ -547,6 +576,7 @@ class UniFiWanDownloadMonth(_BaseTotalMB):
             "period_start": self._period_start.isoformat() if self._period_start else None,
             "reset_day": self._reset_day,
             "base_bytes": self._base_bytes,
+            "offset_mb": self._value_offset_mb,
         }
 
 
@@ -581,6 +611,12 @@ class UniFiWanUploadMonth(_BaseTotalMB):
                 )
             except Exception:
                 self._period_start = current_start
+            offset = last_state.attributes.get("offset_mb")
+            if offset is not None:
+                try:
+                    self._value_offset_mb = float(offset)
+                except Exception:
+                    self._value_offset_mb = 0.0
             base = last_state.attributes.get("base_bytes")
             if base is not None:
                 try:
@@ -590,12 +626,14 @@ class UniFiWanUploadMonth(_BaseTotalMB):
         else:
             self._value_mb = 0.0
             self._period_start = current_start
+            self._value_offset_mb = 0.0
             self._base_bytes = None
 
         if self._period_start != current_start:
             self._period_start = current_start
             self._base_bytes = None
             self._value_mb = 0.0
+            self._value_offset_mb = 0.0
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -606,6 +644,7 @@ class UniFiWanUploadMonth(_BaseTotalMB):
             self._period_start = current_start
             self._base_bytes = None
             self._value_mb = 0.0
+            self._value_offset_mb = 0.0
 
         self._update_from_counter()
         self.async_write_ha_state()
@@ -616,6 +655,7 @@ class UniFiWanUploadMonth(_BaseTotalMB):
             "period_start": self._period_start.isoformat() if self._period_start else None,
             "reset_day": self._reset_day,
             "base_bytes": self._base_bytes,
+            "offset_mb": self._value_offset_mb,
         }
 
 

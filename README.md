@@ -3,6 +3,12 @@ Home Assistant custom component
 
 Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG / etc.)
 
+## Features
+
+- Live WAN status, IP information and throughput sensors
+- Daily and monthly usage totals that persist across Home Assistant restarts and survive UniFi gateway counter resets
+- Speedtest automation with manual triggers and binary sensors for insight into the test lifecycle
+
 Primary UniFi Network API endpoints used:
 
 - `GET /proxy/network/api/s/<site>/stat/device` — full site device stats (gateway, WAN sections, speedtest info)
@@ -32,7 +38,7 @@ Get the API key from your UniFi Console UI:
 
 **WAN data usage (integrated totals)**
 
-These are calculated from the live WAN rates (`rx_bytes-r` / `tx_bytes-r`) and updated on every fast-rate poll. They survive restarts via `RestoreSensor`.
+These are calculated from the live WAN rates (`rx_bytes-r` / `tx_bytes-r`) and updated on every fast-rate poll. They survive Home Assistant restarts via `RestoreSensor` and keep counting even if the UniFi gateway reboots and clears its WAN byte counters.
 
 - **UniFi WAN Download Today**  
   - Total WAN download **today** in **MB**  

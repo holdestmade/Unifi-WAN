@@ -88,7 +88,6 @@ def _infer_active_wan_id(gw: dict[str, Any] | None) -> Tuple[Optional[str], dict
         }
     )
 
-    # 1) IP match
     if u_ip:
         if u_ip == w1.get("ip"):
             debug["match"] = "ip==wan1.ip"
@@ -97,7 +96,6 @@ def _infer_active_wan_id(gw: dict[str, Any] | None) -> Tuple[Optional[str], dict
             debug["match"] = "ip==wan2.ip"
             return "WAN2", debug
 
-    # 2) ifname match
     if u_if:
         if u_if == w1.get("ifname"):
             debug["match"] = "ifname==wan1.ifname"
@@ -106,7 +104,6 @@ def _infer_active_wan_id(gw: dict[str, Any] | None) -> Tuple[Optional[str], dict
             debug["match"] = "ifname==wan2.ifname"
             return "WAN2", debug
 
-    # 3) name/comment match (best-effort)
     u_names = {_norm(u_name), _norm(u_comment)}
     w1_names = {_norm(w1.get("name")), _norm(w1.get("comment"))}
     w2_names = {_norm(w2.get("name")), _norm(w2.get("comment"))}
@@ -117,7 +114,6 @@ def _infer_active_wan_id(gw: dict[str, Any] | None) -> Tuple[Optional[str], dict
         debug["match"] = "name/comment≈wan2"
         return "WAN2", debug
 
-    # 4) Fallback: if only one is up
     w1_up = bool(w1.get("up"))
     w2_up = bool(w2.get("up"))
     if w1_up and not w2_up:
@@ -127,7 +123,6 @@ def _infer_active_wan_id(gw: dict[str, Any] | None) -> Tuple[Optional[str], dict
         debug["match"] = "fallback:wan2.up"
         return "WAN2", debug
 
-    # Legacy single-WAN key (wan)
     w = _wan_section(gw, "wan") or {}
     if w.get("up"):
         debug["match"] = "legacy:wan.up"
@@ -143,7 +138,6 @@ def _current_billing_period_start(now: datetime, reset_day: int) -> date:
     d = now.date()
     if d.day >= reset_day:
         return date(d.year, d.month, reset_day)
-    # Previous month
     if d.month == 1:
         return date(d.year - 1, 12, reset_day)
     return date(d.year, d.month - 1, reset_day)
@@ -172,18 +166,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         reset_day = 31
 
     entities = [
-        # Basic link info
         UniFiWanIPv4(device, entry, host, site, devname, meta),
         UniFiWanIPv6(device, entry, host, site, devname, meta),
-        # WAN rate sensors (fast coordinator)
         UniFiWanDownMbps(rates, entry, host, site, devname, meta),
         UniFiWanUpMbps(rates, entry, host, site, devname, meta),
-        # Totals (MB native; UI can override to GB if desired)
         UniFiWanDownloadToday(rates, entry, host, site, devname, meta),
         UniFiWanUploadToday(rates, entry, host, site, devname, meta),
         UniFiWanDownloadMonth(rates, entry, host, site, devname, meta, reset_day),
         UniFiWanUploadMonth(rates, entry, host, site, devname, meta, reset_day),
-        # Speedtest sensors (normal cadence)
         UniFiSpeedtestDown(device, entry, host, site, devname, meta),
         UniFiSpeedtestUp(device, entry, host, site, devname, meta),
         UniFiSpeedtestPing(device, entry, host, site, devname, meta),
@@ -320,7 +310,15 @@ class UniFiWanUpMbps(UniFiBaseEntity):
 
 
 class _BaseTotalMB(UniFiBaseEntity, RestoreSensor):
-    """Base for MB totals (today / month) derived from rx_bytes-r / tx_bytes-r."""
+    """
+    Base for MB totals (today / month) derived from cumulative rx_bytes / tx_bytes.
+
+    Logic:
+      - Read cumulative counter from uplink: rx_bytes or tx_bytes
+      - Keep a per-entity baseline "base_bytes" for the period
+      - Total = max(0, current_bytes - base_bytes) / (1024*1024)
+      - If counter ever goes backwards -> treat as reset and rebase to 0
+    """
 
     _attr_state_class = SensorStateClass.TOTAL
     _attr_device_class = SensorDeviceClass.DATA_SIZE
@@ -329,51 +327,46 @@ class _BaseTotalMB(UniFiBaseEntity, RestoreSensor):
     def __init__(self, coordinator, entry, host, site, devname, meta, direction: str):
         UniFiBaseEntity.__init__(self, coordinator, entry, host, site, devname, meta)
         RestoreSensor.__init__(self)
-        self._direction = direction  # "down" or "up"
+        self._direction = direction
         self._value_mb: float = 0.0
-        self._last_update: Optional[datetime] = None
+        self._base_bytes: Optional[int] = None
 
     @property
     def native_value(self):
         return round(self._value_mb, 3)
 
-    def _get_rate_bytes_per_sec(self) -> Optional[float]:
+    def _get_cumulative_bytes(self) -> Optional[int]:
         gw = _pick_gateway(self.coordinator.data)
         uplink = (gw or {}).get("uplink") or {}
-        key = "rx_bytes-r" if self._direction == "down" else "tx_bytes-r"
+        key = "rx_bytes" if self._direction == "down" else "tx_bytes"
         val = uplink.get(key)
         if val is None:
             return None
         try:
-            return float(val)
+            return int(val)
         except Exception:
             return None
 
-    def _integrate(self, now: datetime):
-        rate = self._get_rate_bytes_per_sec()
-        if rate is None:
-            self._last_update = now
+    def _update_from_counter(self) -> None:
+        """Update _value_mb from current cumulative counter and baseline."""
+        current = self._get_cumulative_bytes()
+        if current is None:
             return
 
-        if self._last_update is not None:
-            delta_seconds = (now - self._last_update).total_seconds()
-        else:
-            delta_seconds = float(
-                self.coordinator.update_interval.total_seconds()
-                if self.coordinator.update_interval
-                else 0
-            )
-        if delta_seconds <= 0:
-            self._last_update = now
+        if self._base_bytes is None:
+            self._base_bytes = current
+            self._value_mb = 0.0
             return
 
-        try:
-            bytes_delta = rate * delta_seconds
-            self._value_mb += bytes_delta / (1024 * 1024)
-        except Exception:
-            pass
+        if current < self._base_bytes:
+            self._base_bytes = current
+            self._value_mb = 0.0
+            return
 
-        self._last_update = now
+        delta_bytes = current - self._base_bytes
+        new_value = max(0.0, delta_bytes / (1024 * 1024))
+        if new_value >= self._value_mb:
+            self._value_mb = new_value
 
 
 class UniFiWanDownloadToday(_BaseTotalMB):
@@ -400,46 +393,35 @@ class UniFiWanDownloadToday(_BaseTotalMB):
             except Exception:
                 self._value_mb = 0.0
             self._day_str = last_state.attributes.get("day") or today_str
-            lu = last_state.attributes.get("last_update")
-            if isinstance(lu, str):
+            base = last_state.attributes.get("base_bytes")
+            if base is not None:
                 try:
-                    self._last_update = datetime.fromisoformat(lu)
+                    self._base_bytes = int(base)
                 except Exception:
-                    self._last_update = now
-            else:
-                self._last_update = now
+                    self._base_bytes = None
         else:
             self._value_mb = 0.0
             self._day_str = today_str
-            self._last_update = now
+            self._base_bytes = None
 
     @callback
     def _handle_coordinator_update(self) -> None:
         now = dt_util.now()
         today_str = now.date().isoformat()
 
-        same_day = self._day_str == today_str
-        if not same_day:
-            # New day: reset
-            self._value_mb = 0.0
+        if self._day_str != today_str:
             self._day_str = today_str
-            self._last_update = now
-            same_day = True  # after reset, treat as same-day for clamp logic
+            self._base_bytes = None
+            self._value_mb = 0.0
 
-        old_value = self._value_mb
-        self._integrate(now)
-
-        # Clamp: do not allow decrease within the same day
-        if same_day and self._value_mb < old_value:
-            self._value_mb = old_value
-
+        self._update_from_counter()
         self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self):
         return {
             "day": self._day_str,
-            "last_update": self._last_update.isoformat() if self._last_update else None,
+            "base_bytes": self._base_bytes,
         }
 
 
@@ -467,44 +449,35 @@ class UniFiWanUploadToday(_BaseTotalMB):
             except Exception:
                 self._value_mb = 0.0
             self._day_str = last_state.attributes.get("day") or today_str
-            lu = last_state.attributes.get("last_update")
-            if isinstance(lu, str):
+            base = last_state.attributes.get("base_bytes")
+            if base is not None:
                 try:
-                    self._last_update = datetime.fromisoformat(lu)
+                    self._base_bytes = int(base)
                 except Exception:
-                    self._last_update = now
-            else:
-                self._last_update = now
+                    self._base_bytes = None
         else:
             self._value_mb = 0.0
             self._day_str = today_str
-            self._last_update = now
+            self._base_bytes = None
 
     @callback
     def _handle_coordinator_update(self) -> None:
         now = dt_util.now()
         today_str = now.date().isoformat()
 
-        same_day = self._day_str == today_str
-        if not same_day:
-            self._value_mb = 0.0
+        if self._day_str != today_str:
             self._day_str = today_str
-            self._last_update = now
-            same_day = True
+            self._base_bytes = None
+            self._value_mb = 0.0
 
-        old_value = self._value_mb
-        self._integrate(now)
-
-        if same_day and self._value_mb < old_value:
-            self._value_mb = old_value
-
+        self._update_from_counter()
         self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self):
         return {
             "day": self._day_str,
-            "last_update": self._last_update.isoformat() if self._last_update else None,
+            "base_bytes": self._base_bytes,
         }
 
 
@@ -539,42 +512,33 @@ class UniFiWanDownloadMonth(_BaseTotalMB):
                 )
             except Exception:
                 self._period_start = current_start
-            lu = last_state.attributes.get("last_update")
-            if isinstance(lu, str):
+            base = last_state.attributes.get("base_bytes")
+            if base is not None:
                 try:
-                    self._last_update = datetime.fromisoformat(lu)
+                    self._base_bytes = int(base)
                 except Exception:
-                    self._last_update = now
-            else:
-                self._last_update = now
+                    self._base_bytes = None
         else:
             self._value_mb = 0.0
             self._period_start = current_start
-            self._last_update = now
+            self._base_bytes = None
 
         if self._period_start != current_start:
-            self._value_mb = 0.0
             self._period_start = current_start
+            self._base_bytes = None
+            self._value_mb = 0.0
 
     @callback
     def _handle_coordinator_update(self) -> None:
         now = dt_util.now()
         current_start = _current_billing_period_start(now, self._reset_day)
 
-        same_period = self._period_start == current_start
-        if not same_period:
-            self._value_mb = 0.0
+        if self._period_start != current_start:
             self._period_start = current_start
-            self._last_update = now
-            same_period = True
+            self._base_bytes = None
+            self._value_mb = 0.0
 
-        old_value = self._value_mb
-        self._integrate(now)
-
-        # Clamp: do not allow decrease within the same billing period
-        if same_period and self._value_mb < old_value:
-            self._value_mb = old_value
-
+        self._update_from_counter()
         self.async_write_ha_state()
 
     @property
@@ -582,7 +546,7 @@ class UniFiWanDownloadMonth(_BaseTotalMB):
         return {
             "period_start": self._period_start.isoformat() if self._period_start else None,
             "reset_day": self._reset_day,
-            "last_update": self._last_update.isoformat() if self._last_update else None,
+            "base_bytes": self._base_bytes,
         }
 
 
@@ -617,41 +581,33 @@ class UniFiWanUploadMonth(_BaseTotalMB):
                 )
             except Exception:
                 self._period_start = current_start
-            lu = last_state.attributes.get("last_update")
-            if isinstance(lu, str):
+            base = last_state.attributes.get("base_bytes")
+            if base is not None:
                 try:
-                    self._last_update = datetime.fromisoformat(lu)
+                    self._base_bytes = int(base)
                 except Exception:
-                    self._last_update = now
-            else:
-                self._last_update = now
+                    self._base_bytes = None
         else:
             self._value_mb = 0.0
             self._period_start = current_start
-            self._last_update = now
+            self._base_bytes = None
 
         if self._period_start != current_start:
-            self._value_mb = 0.0
             self._period_start = current_start
+            self._base_bytes = None
+            self._value_mb = 0.0
 
     @callback
     def _handle_coordinator_update(self) -> None:
         now = dt_util.now()
         current_start = _current_billing_period_start(now, self._reset_day)
 
-        same_period = self._period_start == current_start
-        if not same_period:
-            self._value_mb = 0.0
+        if self._period_start != current_start:
             self._period_start = current_start
-            self._last_update = now
-            same_period = True
+            self._base_bytes = None
+            self._value_mb = 0.0
 
-        old_value = self._value_mb
-        self._integrate(now)
-
-        if same_period and self._value_mb < old_value:
-            self._value_mb = old_value
-
+        self._update_from_counter()
         self.async_write_ha_state()
 
     @property
@@ -659,7 +615,7 @@ class UniFiWanUploadMonth(_BaseTotalMB):
         return {
             "period_start": self._period_start.isoformat() if self._period_start else None,
             "reset_day": self._reset_day,
-            "last_update": self._last_update.isoformat() if self._last_update else None,
+            "base_bytes": self._base_bytes,
         }
 
 
@@ -810,7 +766,7 @@ class UniFiActiveWanId(UniFiBaseEntity):
     def native_value(self):
         gw = _pick_gateway(self.coordinator.data)
         wan_id, _ = _infer_active_wan_id(gw)
-        return wan_id  # "WAN1" / "WAN2" / "WAN" / None
+        return wan_id
 
     @property
     def extra_state_attributes(self):

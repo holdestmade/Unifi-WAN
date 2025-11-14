@@ -1,54 +1,207 @@
 # UniFi WAN
 Home Assistant custom component
 
-Pull WAN metrics from a UniFi OS console (UDM/UDR/UXG) using the `X-API-Key` header — **single endpoint**: `/proxy/network/api/s/<site>/stat/device`.
+Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG / etc.)
 
-Get API key from Unifi Console:
-  settings/control-plane/integrations
+Primary UniFi Network API endpoints used:
 
-Work in Progress
+- `GET /proxy/network/api/s/<site>/stat/device` — full site device stats (gateway, WAN sections, speedtest info)
+- `GET /proxy/network/api/s/<site>/stat/device/<mac>` — lightweight per-gateway stats for fast WAN rates
+- `POST /proxy/network/api/s/<site>/cmd/devmgr` — trigger a speedtest on the gateway
+
+Get the API key from your UniFi Console UI:
+
+> **Settings → Control Plane → Integrations → API Keys**
+
+---
 
 ## Exposed entities
-**Sensors**
-- UniFi WAN IPv4 — from `gateway.uplink.ip`
-- UniFi WAN IPv6 — from `gateway.uplink.ip6` (if present)
-- UniFi WAN Download — `uplink.rx_bytes-r` → (Mbit/s)
-- UniFi WAN Upload — `uplink.tx_bytes-r` → (Mbit/s)
-- UniFi Speedtest Download — `uplink.xput_down` (Mbit/s)
-- UniFi Speedtest Upload — `uplink.xput_up` (Mbit/s)
-- UniFi Speedtest Ping — `uplink.speedtest_ping` (ms)
-- UniFi Speedtest Last Run — `uplink.speedtest_lastrun` (timestamp)
-- UniFi Active WAN Name — `uplink.name` (e.g., `ppp0`, `WAN`, `WAN2`)
-- UniFi Active WAN ID — heuristically derived (`WAN1` / `WAN2` / `WAN`)
 
-**Binary sensors**
-- UniFi WAN Internet — `uplink.up`
-- UniFi Active WAN Up — same as above (kept for compatibility)
-- UniFi WAN1 Link — `gateway.wan1.up`
-- UniFi WAN2 Link — `gateway.wan2.up`
-- UniFi Speedtest In Progress — integration-triggered speedtest running state
+### Sensors
+
+**WAN status & rates**
+
+- **UniFi WAN IPv4**  
+  - Current WAN IPv4 address  
+  - From `gateway.uplink.ip`
+- **UniFi WAN IPv6**  
+  - Current WAN IPv6 address (if present)  
+  - From `gateway.uplink.ip6`
+- **UniFi WAN Download**  
+  - Current downstream rate in **Mbit/s**  
+  - From `gateway.uplink.rx_bytes-r` (bytes/s) → converted to Mbit/s  
+  - `device_class: data_rate`, `state_class: measurement`
+- **UniFi WAN Upload**  
+  - Current upstream rate in **Mbit/s**  
+  - From `gateway.uplink.tx_bytes-r` (bytes/s) → converted to Mbit/s  
+  - `device_class: data_rate`, `state_class: measurement`
+
+**WAN data usage (integrated totals)**
+
+These are calculated from the live WAN rates (`rx_bytes-r` / `tx_bytes-r`) and updated on every fast-rate poll. They survive restarts via `RestoreSensor`.
+
+- **UniFi WAN Download Today**  
+  - Total WAN download **today** in **MB**  
+  - Resets automatically at local midnight  
+  - `device_class: data_size`, `state_class: total (increasing)`
+- **UniFi WAN Upload Today**  
+  - Total WAN upload **today** in **MB**  
+  - Resets automatically at local midnight  
+  - `device_class: data_size`, `state_class: total (increasing)`
+- **UniFi WAN Download This Month**  
+  - Total WAN download for the **current billing month** in **MB**  
+  - Resets on a **configurable “month reset day”** (e.g. 11th)  
+  - `device_class: data_size`, `state_class: total (increasing)`
+- **UniFi WAN Upload This Month**  
+  - Total WAN upload for the **current billing month** in **MB**  
+  - Resets on the same **month reset day**  
+  - `device_class: data_size`, `state_class: total (increasing)`
+
+> If you prefer GB in the UI: open an entity → **Settings → Unit of measurement** and set it to GB. Home Assistant will automatically convert from MB because the sensors use `device_class: data_size`.
+
+**Speedtest**
+
+Speedtest values are taken from the gateway’s `uplink` section after a speedtest completes.
+
+- **UniFi Speedtest Download**  
+  - Gateway speedtest download result in **Mbit/s**  
+  - From `uplink.xput_down`
+- **UniFi Speedtest Upload**  
+  - Gateway speedtest upload result in **Mbit/s**  
+  - From `uplink.xput_up`
+- **UniFi Speedtest Ping**  
+  - Gateway speedtest latency in **ms**  
+  - From `uplink.speedtest_ping`
+- **UniFi Speedtest Last Run**  
+  - Timestamp of the last speedtest  
+  - From `uplink.speedtest_lastrun` → `timestamp`
+
+**WAN identification**
+
+- **UniFi Active WAN Name**  
+  - Human-friendly description of the currently active WAN  
+  - Built from `uplink.comment` and/or `uplink.name` (e.g. `FTTP - (WAN1)`)
+- **UniFi Active WAN ID**  
+  - Logical ID of the active WAN: `WAN1`, `WAN2`, `WAN`, or `unknown`  
+  - Heuristically derived from:
+    - IP matches
+    - Interface name matches
+    - WAN section `up` flags
+    - Legacy single-WAN `wan` section  
+  - Attributes include the chosen section IP/interface and the match reason for debugging.
+
+---
+
+### Binary sensors
+
+- **UniFi WAN Internet**  
+  - `on` if `gateway.uplink.up` is true (Internet reachable from the gateway)
+- **UniFi Active WAN Up**  
+  - Same as above (kept for compatibility)
+- **UniFi WAN1 Link**  
+  - `on` if `gateway.wan1.up`
+- **UniFi WAN2 Link**  
+  - `on` if `gateway.wan2.up`
+- **UniFi Speedtest In Progress**  
+  - `on` while an integration-triggered speedtest command is running  
+  - Turns off once results have been pulled and sensors refreshed
+
+---
+
+### Switches
+
+- **UniFi WAN Auto Speedtest**  
+  - Enables/disables the integration’s scheduled speedtest job  
+  - Toggling this switch updates the internal scheduler without needing to reconfigure the integration
+
+---
+
+### Buttons
+
+- **Run UniFi Speedtest** (name may vary slightly depending on HA version)  
+  - Triggers a one-off speedtest on the active UniFi gateway  
+  - After a short delay, the integration refreshes `Speedtest` sensors with the latest results
+
+---
 
 ## Options
-- **Host / IP**
-- **API Key**
-- **Site** (default `default`)
-- **Verify SSL certificate**
-- **Scan interval (s)** (Maximum API calls allowed is 100 per minute)
-- **Run speedtest automatically** — on/off (default **on**)
-- **Auto speedtest interval (minutes)** — default **60**
 
-Changing any option revalidates against `/stat/device` and reloads the entry.
+All options are available via the integration’s **Options** UI and can be changed later; changing any option:
+
+- Revalidates the connection against `stat/device`
+- Reloads the config entry cleanly
+
+**Connection / API**
+
+- **Host / IP**  
+  - Your UniFi OS console address (e.g. `192.168.1.1` or `udm.local`)
+- **API Key**  
+  - X-API-Key generated in UniFi Console
+- **Site**  
+  - UniFi Network site name (default: `default`)
+- **Verify SSL certificate**  
+  - Enable to verify the console’s HTTPS certificate
+
+**Polling / update intervals**
+
+- **Scan interval (seconds)**  
+  - How often to poll full `stat/device` for gateway, WAN sections, speedtest info, etc.  
+  - This is the “heavier” call (all devices).  
+  - Keep this reasonably low frequency (e.g. 15–60s).  
+  - UniFi API limit is ~100 calls per minute per API key.
+- **Fast WAN rate interval (seconds)**  
+  - Poll interval for the per-gateway endpoint: `stat/device/<mac>`  
+  - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** & **totals integration**.  
+  - You can safely set this to **1–2 seconds** for near real-time graphs, as it is only a single device request.
+
+**Speedtest automation**
+
+- **Run speedtest automatically** (on/off, default **on**)  
+  - Enable/disable automatic speedtests entirely.
+- **Auto speedtest interval (minutes)** (default **60**)  
+  - How often to trigger an automatic speedtest when enabled.
+
+**WAN monthly totals**
+
+- **Month reset day** (1–31, default **1**)  
+  - Defines the **billing month** for the “This Month” total sensors.  
+  - Example: If set to `11`, the billing period runs from the **11th → 10th** of the next month.  
+  - Download/Upload “This Month” sensors reset whenever a new billing period starts.
+
+---
+
+## Device information
+
+The integration creates a single UniFi WAN **device** in Home Assistant with:
+
+- Manufacturer: **Ubiquiti**
+- Model: derived from the gateway (`model` / `type`, e.g. `UDM-Pro`)
+- Firmware: **`sw_version`** from the gateway (`version` / `firmware_version`)
+- MAC address: mapped as a device connection (`("mac", "<MAC>")`)
+- Configuration URL: link back to your console (`https://<host>/`)
+
+All sensors, binary sensors, buttons and switches are attached to this device so they show up on the same device card.
+
+---
 
 ## Install
 
-HACS
-1. Add this repository via HACS custom repositories for easy update
-https://github.com/holdestmade/Unifi-WAN
-2. Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.
+### HACS
 
-Manual
-1. Copy `custom_components/unifi_wan/` into your Home Assistant `config` folder.
+1. Add this repository as a custom repository in HACS  
+   `https://github.com/holdestmade/Unifi-WAN`
+2. In Home Assistant, open **HACS → Integrations**, find **UniFi WAN** and install.
+3. Restart Home Assistant if prompted.
+
+### Manual
+
+1. Copy the `custom_components/unifi_wan/` folder into your Home Assistant `config` directory.
 2. Restart Home Assistant.
-3. Settings → Devices & Services → **Add Integration** → “UniFi WAN”.
-4. Enter Host/IP, API Key, Site.
+3. Go to **Settings → Devices & Services → Add Integration** and search for **“UniFi WAN”**.
+4. Enter:
+   - Host/IP of your UniFi OS console  
+   - API Key  
+   - Site name (if not `default`)  
+   - SSL verification preference
 
+Once added, you’ll get a single UniFi WAN device with all the WAN, speedtest, and usage sensors attached.

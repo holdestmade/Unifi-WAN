@@ -23,18 +23,12 @@ Get the API key from your UniFi Console UI:
 
 - **UniFi WAN IPv4**  
   - Current WAN IPv4 address  
-  - From `gateway.uplink.ip`
 - **UniFi WAN IPv6**  
   - Current WAN IPv6 address (if present)  
-  - From `gateway.uplink.ip6`
 - **UniFi WAN Download**  
   - Current downstream rate in **Mbit/s**  
-  - From `gateway.uplink.rx_bytes-r` (bytes/s) → converted to Mbit/s  
-  - `device_class: data_rate`, `state_class: measurement`
 - **UniFi WAN Upload**  
   - Current upstream rate in **Mbit/s**  
-  - From `gateway.uplink.tx_bytes-r` (bytes/s) → converted to Mbit/s  
-  - `device_class: data_rate`, `state_class: measurement`
 
 **WAN data usage (integrated totals)**
 
@@ -43,21 +37,15 @@ These are calculated from the live WAN rates (`rx_bytes-r` / `tx_bytes-r`) and u
 - **UniFi WAN Download Today**  
   - Total WAN download **today** in **MB**  
   - Resets automatically at local midnight  
-  - `device_class: data_size`, `state_class: total (increasing)`
 - **UniFi WAN Upload Today**  
   - Total WAN upload **today** in **MB**  
   - Resets automatically at local midnight  
-  - `device_class: data_size`, `state_class: total (increasing)`
 - **UniFi WAN Download This Month**  
   - Total WAN download for the **current billing month** in **MB**  
   - Resets on a **configurable “month reset day”** (e.g. 11th)  
-  - `device_class: data_size`, `state_class: total (increasing)`
 - **UniFi WAN Upload This Month**  
   - Total WAN upload for the **current billing month** in **MB**  
   - Resets on the same **month reset day**  
-  - `device_class: data_size`, `state_class: total (increasing)`
-
-> If you prefer GB in the UI: open an entity → **Settings → Unit of measurement** and set it to GB. Home Assistant will automatically convert from MB because the sensors use `device_class: data_size`.
 
 **Speedtest**
 
@@ -65,22 +53,17 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 
 - **UniFi Speedtest Download**  
   - Gateway speedtest download result in **Mbit/s**  
-  - From `uplink.xput_down`
 - **UniFi Speedtest Upload**  
   - Gateway speedtest upload result in **Mbit/s**  
-  - From `uplink.xput_up`
 - **UniFi Speedtest Ping**  
   - Gateway speedtest latency in **ms**  
-  - From `uplink.speedtest_ping`
 - **UniFi Speedtest Last Run**  
   - Timestamp of the last speedtest  
-  - From `uplink.speedtest_lastrun` → `timestamp`
 
 **WAN identification**
 
 - **UniFi Active WAN Name**  
   - Human-friendly description of the currently active WAN  
-  - Built from `uplink.comment` and/or `uplink.name` (e.g. `FTTP - (WAN1)`)
 - **UniFi Active WAN ID**  
   - Logical ID of the active WAN: `WAN1`, `WAN2`, `WAN`, or `unknown`  
   - Heuristically derived from:
@@ -95,13 +78,9 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 ### Binary sensors
 
 - **UniFi WAN Internet**  
-  - `on` if `gateway.uplink.up` is true (Internet reachable from the gateway)
 - **UniFi Active WAN Up**  
-  - Same as above (kept for compatibility)
 - **UniFi WAN1 Link**  
-  - `on` if `gateway.wan1.up`
 - **UniFi WAN2 Link**  
-  - `on` if `gateway.wan2.up`
 - **UniFi Speedtest In Progress**  
   - `on` while an integration-triggered speedtest command is running  
   - Turns off once results have been pulled and sensors refreshed
@@ -174,11 +153,11 @@ All options are available via the integration’s **Options** UI and can be chan
 
 The integration creates a single UniFi WAN **device** in Home Assistant with:
 
-- Manufacturer: **Ubiquiti**
-- Model: derived from the gateway (`model` / `type`, e.g. `UDM-Pro`)
-- Firmware: **`sw_version`** from the gateway (`version` / `firmware_version`)
-- MAC address: mapped as a device connection (`("mac", "<MAC>")`)
-- Configuration URL: link back to your console (`https://<host>/`)
+- Manufacturer
+- Model
+- Firmware
+- MAC address
+- Configuration URL
 
 All sensors, binary sensors, buttons and switches are attached to this device so they show up on the same device card.
 

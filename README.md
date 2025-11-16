@@ -19,6 +19,10 @@ Get the API key from your UniFi Console UI:
 
 > **Settings → Control Plane → Integrations → API Keys**
 
+This integration currently only supports UniFi OS consoles (UDM, UDR, UDM Pro, UXG, etc.) using a local API key generated on the console, and the /proxy/network/api endpoints.
+It does not support:
+- Standalone UniFi Network running in a VM or Docker without UniFi OS.
+- API keys generated on unifi.ui.com for cloud-only access.
 ---
 
 ## Exposed entities

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_HOST, CONF_SITE
+from .const import DOMAIN, CONF_HOST, CONF_SITE, GATEWAY_DEVICES
 
 
 def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -18,7 +18,7 @@ def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     data = payload.get("data")
     if not isinstance(data, list):
         return None
-    for t in ("udm", "ugw"):
+    for t in GATEWAY_DEVICES:
         for dev in data:
             if isinstance(dev, dict) and dev.get("type") == t:
                 return dev

@@ -22,6 +22,7 @@ from .const import (
     DOMAIN,
     CONF_MONTH_RESET_DAY,
     DEFAULT_MONTH_RESET_DAY,
+    GATEWAY_DEVICES
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     data = payload.get("data")
     if not isinstance(data, list):
         return None
-    for t in ("udm", "ugw"):
+    for t in GATEWAY_DEVICES:
         for dev in data:
             if isinstance(dev, dict) and dev.get("type") == t:
                 return dev

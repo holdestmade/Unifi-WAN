@@ -31,6 +31,7 @@ from .const import (
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
     LEGACY_CONF_DEVICE_INTERVAL,
     SIGNAL_SPEEDTEST_RUNNING,
+    GATEWAY_DEVICES
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ def _pick_gateway(payload: dict[str, Any] | None) -> Optional[dict[str, Any]]:
     data = payload.get("data")
     if not isinstance(data, list):
         return None
-    devs = [d for d in data if isinstance(d, dict) and d.get("type") in ("udm", "ugw")]
+    devs = [d for d in data if isinstance(d, dict) and d.get("type") in GATEWAY_DEVICES]
     if not devs:
         return None
     devs.sort(key=lambda d: (not d.get("adopted", True), "uplink" not in d))

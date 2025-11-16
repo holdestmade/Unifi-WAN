@@ -28,3 +28,5 @@ DEFAULT_VERIFY_SSL = False
 PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
 
 SIGNAL_SPEEDTEST_RUNNING = f"{DOMAIN}_speedtest_running"
+
+GATEWAY_DEVICES = ["udm", "ugw", "uxg", "uxg-pro"]

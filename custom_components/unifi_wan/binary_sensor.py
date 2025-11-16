@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 
-from .const import CONF_HOST, CONF_SITE, DOMAIN
+from .const import CONF_HOST, CONF_SITE, DOMAIN, GATEWAY_DEVICES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     data = payload.get("data")
     if not isinstance(data, list):
         return None
-    for t in ("udm", "ugw"):
+    for t in GATEWAY_DEVICES:
         for dev in data:
             if isinstance(dev, dict) and dev.get("type") == t:
                 return dev

@@ -112,7 +112,15 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 
 ### Buttons
 
-- **Run UniFi Speedtest** (name may vary slightly depending on HA version)  
+- **Run UniFi Speedtest**
+  - Triggers a one-off speedtest on the active UniFi gateway  
+  - After a short delay, the integration refreshes `Speedtest` sensors with the latest results
+
+---
+
+### Service
+
+- **Run UniFi Speedtest** 
   - Triggers a one-off speedtest on the active UniFi gateway  
   - After a short delay, the integration refreshes `Speedtest` sensors with the latest results
 

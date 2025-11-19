@@ -1,9 +1,9 @@
 {
   "domain": "unifi_wan",
   "name": "UniFi WAN",
-  "version": "0.7.0",
-  "documentation": "https://github.com/unifi-wan",
-  "issue_tracker": "https://github.com/unifi-wan/issues",
+  "version": "0.8.0",
+  "documentation": "https://github.com/holdestmade/Unifi-WAN",
+  "issue_tracker": "https://github.com/holdestmade/Unifi-WAN/issues",
   "codeowners": ["@holdestmade"],
   "config_flow": true,
   "iot_class": "local_polling",

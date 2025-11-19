@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 from typing import Any
-
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_HOST, CONF_SITE, DOMAIN
+from .const import DOMAIN
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     shared = hass.data[DOMAIN][entry.entry_id]
     meta = shared.get("dev_meta", {})
-    host = entry.options.get(CONF_HOST, entry.data.get(CONF_HOST)) or "unknown"
-    site = entry.options.get(CONF_SITE, entry.data.get(CONF_SITE, "default")) or "default"
+    host = shared["host"]
+    site = shared["site"]
     devname = f"UniFi WAN ({host} / {site})"
     async_add_entities([UniFiAutoSpeedtestSwitch(shared, host, site, devname, meta)])
 
@@ -27,7 +26,7 @@ class UniFiAutoSpeedtestSwitch(SwitchEntity):
         self._host = host
         self._site = site
         self._devname = devname
-        self._meta = meta or {}
+        self._meta = meta
 
     @property
     def unique_id(self):
@@ -35,29 +34,23 @@ class UniFiAutoSpeedtestSwitch(SwitchEntity):
 
     @property
     def device_info(self):
-        info: dict[str, Any] = {
+        return {
             "identifiers": {(DOMAIN, self._host, self._site)},
             "name": self._devname,
             "manufacturer": "Ubiquiti",
-            "model": self._meta.get("model") or "UDM/UGW",
-            "configuration_url": f"https://{self._host}/",
+            "model": self._meta.get("model"),
         }
-        sw = self._meta.get("sw_version")
-        if sw:
-            info["sw_version"] = sw
-        mac = (self._meta.get("mac") or "").upper()
-        if mac:
-            info["connections"] = {("mac", mac)}
-        return info
 
     @property
     def is_on(self) -> bool:
         return bool(self._shared.get("auto_enabled", False))
 
     async def async_turn_on(self, **kwargs):
-        self._shared["enable_auto"]()
+        self._shared["manage_auto"](True)
+        self._shared["auto_enabled"] = True
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs):
-        self._shared["disable_auto"]()
+        self._shared["manage_auto"](False)
+        self._shared["auto_enabled"] = False
         self.async_write_ha_state()

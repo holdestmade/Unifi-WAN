@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from homeassistant.const import Platform
+
 DOMAIN = "unifi_wan"
 
 CONF_HOST = "host"
@@ -25,8 +27,14 @@ DEFAULT_AUTO_SPEEDTEST_MINUTES = 60
 DEFAULT_SITE = "default"
 DEFAULT_VERIFY_SSL = False
 
-PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
+PLATFORMS = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SWITCH,
+]
 
 SIGNAL_SPEEDTEST_RUNNING = f"{DOMAIN}_speedtest_running"
+SERVICE_RUN_SPEEDTEST = "run_speedtest"
 
 GATEWAY_DEVICES = ["udm", "ugw", "uxg", "uxg-pro"]

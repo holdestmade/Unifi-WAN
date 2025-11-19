@@ -1,0 +1,3 @@
+run_speedtest:
+  name: Run Speedtest
+  description: Trigger a manual speedtest on the active UniFi Gateway immediately.

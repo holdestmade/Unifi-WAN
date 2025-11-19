@@ -3,22 +3,21 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, CALLBACK_TYPE
+from homeassistant.core import HomeAssistant, ServiceCall, CALLBACK_TYPE
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.const import CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL
 
 from .const import (
     DOMAIN,
     PLATFORMS,
-    CONF_HOST,
-    CONF_API_KEY,
     CONF_SITE,
-    CONF_VERIFY_SSL,
     CONF_SCAN_INTERVAL,
     CONF_RATE_INTERVAL,
     CONF_AUTO_SPEEDTEST,
@@ -31,14 +30,23 @@ from .const import (
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
     LEGACY_CONF_DEVICE_INTERVAL,
     SIGNAL_SPEEDTEST_RUNNING,
-    GATEWAY_DEVICES
+    GATEWAY_DEVICES,
+    SERVICE_RUN_SPEEDTEST,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
+@dataclass
+class UniFiWanData:
+    """Structured data to avoid repeated list parsing in sensors."""
+    devices: list[dict]
+    gateway: dict[str, Any] | None
+    uplink: dict[str, Any]
+    wan1: dict[str, Any]
+    wan2: dict[str, Any]
 
 class UnifiWanClient:
-    """Simple HTTP client for UniFi Network endpoints needed by this integration."""
+    """Simple HTTP client for UniFi Network endpoints."""
 
     def __init__(self, hass: HomeAssistant, host: str, api_key: str, site: str, verify_ssl: bool):
         self._hass = hass
@@ -54,49 +62,67 @@ class UnifiWanClient:
     async def get_json(self, path: str) -> dict:
         url = self._url(path)
         headers = {"X-API-Key": self.api_key}
-        async with self._session.get(url, headers=headers) as resp:
-            text = await resp.text()
-            if resp.status != 200:
-                raise UpdateFailed(f"HTTP {resp.status} for {url}: {text[:200]}")
-            return await resp.json(content_type=None)
+        try:
+            async with self._session.get(url, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise UpdateFailed(f"HTTP {resp.status} for {url}: {text[:200]}")
+                return await resp.json(content_type=None)
+        except Exception as e:
+            raise UpdateFailed(f"Connection error: {e}") from e
 
     async def post_json(self, path: str, payload: dict) -> dict:
         url = self._url(path)
         headers = {"X-API-Key": self.api_key}
-        async with self._session.post(url, headers=headers, json=payload) as resp:
-            text = await resp.text()
-            if resp.status != 200:
-                raise UpdateFailed(f"HTTP {resp.status} for {url}: {text[:200]}")
-            try:
-                return await resp.json(content_type=None)
-            except Exception:
-                return {"ok": resp.status == 200, "text": text[:200]}
+        try:
+            async with self._session.post(url, headers=headers, json=payload) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    _LOGGER.error("HTTP %s for %s: %s", resp.status, url, text[:200])
+                    return {"ok": False}
+                try:
+                    return await resp.json(content_type=None)
+                except Exception:
+                    return {"ok": True}
+        except Exception as e:
+            _LOGGER.error("POST failed: %s", e)
+            return {"ok": False}
 
     async def get_devices(self) -> dict:
-        """Heavy: returns all devices for the site."""
         return await self.get_json("stat/device")
 
     async def get_device(self, mac: str) -> dict:
-        """Lightweight: returns only one device by MAC."""
         return await self.get_json(f"stat/device/{mac}")
 
     async def run_speedtest(self, mac: str) -> dict:
-        """Trigger a speedtest on the given gateway MAC."""
         return await self.post_json("cmd/devmgr", {"cmd": "speedtest", "mac": mac})
 
 
-def _pick_gateway(payload: dict[str, Any] | None) -> Optional[dict[str, Any]]:
-    """Return a single UDM/UGW gateway from a stat/device payload."""
-    if not isinstance(payload, dict):
-        return None
-    data = payload.get("data")
-    if not isinstance(data, list):
-        return None
-    devs = [d for d in data if isinstance(d, dict) and d.get("type") in GATEWAY_DEVICES]
-    if not devs:
-        return None
-    devs.sort(key=lambda d: (not d.get("adopted", True), "uplink" not in d))
-    return devs[0]
+def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
+    """Process raw JSON into a structured object once."""
+    devices = []
+    if isinstance(payload, dict):
+        devices = payload.get("data", []) or []
+    
+    gateway = None
+    for t in GATEWAY_DEVICES:
+        candidates = [d for d in devices if isinstance(d, dict) and d.get("type") == t]
+        if candidates:
+            candidates.sort(key=lambda d: (not d.get("adopted", True), "uplink" not in d))
+            gateway = candidates[0]
+            break
+    
+    uplink = (gateway.get("uplink") or {}) if gateway else {}
+    wan1 = (gateway.get("wan1") or gateway.get("wan")) if gateway else {}
+    wan2 = gateway.get("wan2") if gateway else {}
+
+    return UniFiWanData(
+        devices=devices,
+        gateway=gateway,
+        uplink=uplink,
+        wan1=wan1 or {},
+        wan2=wan2 or {}
+    )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -108,32 +134,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     site = options.get(CONF_SITE, data.get(CONF_SITE, DEFAULT_SITE))
     verify_ssl = options.get(CONF_VERIFY_SSL, data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
 
-    scan_seconds = int(
-        options.get(
-            CONF_SCAN_INTERVAL,
-            options.get(LEGACY_CONF_DEVICE_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        )
-    )
+    scan_seconds = int(options.get(CONF_SCAN_INTERVAL, options.get(LEGACY_CONF_DEVICE_INTERVAL, DEFAULT_SCAN_INTERVAL)))
     rate_seconds = int(options.get(CONF_RATE_INTERVAL, DEFAULT_RATE_INTERVAL))
-    if rate_seconds < 1:
-        rate_seconds = 1
-
-    auto_enabled_default = bool(
-        options.get(CONF_AUTO_SPEEDTEST, data.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST))
-    )
-    auto_minutes = int(
-        options.get(
-            CONF_AUTO_SPEEDTEST_MINUTES,
-            data.get(CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES),
-        )
-    )
-    if auto_minutes < 1:
-        auto_minutes = 1
+    
+    auto_minutes = int(options.get(CONF_AUTO_SPEEDTEST_MINUTES, data.get(CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES)))
+    auto_enabled = bool(options.get(CONF_AUTO_SPEEDTEST, data.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST)))
 
     client = UnifiWanClient(hass, host, api_key, site, verify_ssl)
 
-    async def _update_devices():
-        return await client.get_devices()
+    async def _update_devices() -> UniFiWanData:
+        """Fetch and process data."""
+        raw = await client.get_devices()
+        return _extract_wan_data(raw)
 
     device_coordinator = DataUpdateCoordinator(
         hass,
@@ -145,8 +157,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await device_coordinator.async_config_entry_first_refresh()
 
     dev_meta: dict[str, Any] = {"sw_version": None, "model": "UDM/UGW", "mac": None}
-    gw = _pick_gateway(device_coordinator.data)
-    if gw:
+    if device_coordinator.data.gateway:
+        gw = device_coordinator.data.gateway
         dev_meta["sw_version"] = gw.get("version") or gw.get("firmware_version")
         dev_meta["model"] = gw.get("model") or gw.get("type") or "UDM/UGW"
         dev_meta["mac"] = gw.get("mac")
@@ -154,23 +166,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     rates_coordinator: Optional[DataUpdateCoordinator] = None
     if dev_meta["mac"]:
         mac = dev_meta["mac"]
-
         async def _update_rates():
-            return await client.get_device(mac)
+            raw = await client.get_device(mac)
+            return _extract_wan_data(raw)
 
         rates_coordinator = DataUpdateCoordinator(
             hass,
             _LOGGER,
             name=f"{DOMAIN}_rates",
             update_method=_update_rates,
-            update_interval=timedelta(seconds=rate_seconds),
+            update_interval=timedelta(seconds=max(1, rate_seconds)),
         )
         await rates_coordinator.async_config_entry_first_refresh()
 
     entry_signal = f"{SIGNAL_SPEEDTEST_RUNNING}_{entry.entry_id}"
     speedtest_running: bool = False
     unsub_auto: Optional[CALLBACK_TYPE] = None
-    auto_enabled_runtime: bool = auto_enabled_default
 
     def _dispatch_running():
         async_dispatcher_send(hass, entry_signal)
@@ -183,57 +194,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _dispatch_running()
 
     async def _run_speedtest_now() -> None:
-        """Trigger a speedtest on the active gateway."""
-        gw_local = _pick_gateway(device_coordinator.data)
-        if not gw_local:
-            _LOGGER.debug("Speedtest: no gateway yet, refreshing devices")
-            await device_coordinator.async_request_refresh()
-            gw_local = _pick_gateway(device_coordinator.data)
-            if not gw_local:
-                _LOGGER.warning("Speedtest: no gateway device found; skipping")
-                return
-        mac_local = gw_local.get("mac")
+        """Trigger a speedtest."""
+        gw_data = device_coordinator.data
+        mac_local = gw_data.gateway.get("mac") if gw_data.gateway else None
+        
         if not mac_local:
-            _LOGGER.warning("Speedtest: gateway MAC not found; skipping")
+            await device_coordinator.async_request_refresh()
+            gw_data = device_coordinator.data
+            mac_local = gw_data.gateway.get("mac") if gw_data.gateway else None
+
+        if not mac_local:
+            _LOGGER.warning("Cannot run speedtest: No gateway found.")
             return
 
         await set_speedtest_running(True)
         try:
             await client.run_speedtest(mac_local)
+            await asyncio.sleep(15) 
         except Exception as e:
-            _LOGGER.warning("Speedtest failed: %s", e)
+            _LOGGER.error("Speedtest trigger failed: %s", e)
         finally:
-            await asyncio.sleep(8)
             await device_coordinator.async_request_refresh()
             if rates_coordinator:
                 await rates_coordinator.async_request_refresh()
             await set_speedtest_running(False)
 
     async def _auto_speedtest_callback(_now) -> None:
-        if not auto_enabled_runtime:
-            return
         await _run_speedtest_now()
 
-    def _schedule_auto() -> None:
-        nonlocal unsub_auto
-        if unsub_auto:
-            return
-        unsub_auto = async_track_time_interval(
-            hass,
-            _auto_speedtest_callback,
-            timedelta(minutes=auto_minutes),
-        )
-        _LOGGER.info("UniFi WAN: auto speedtest enabled every %s minute(s)", auto_minutes)
-
-    def _unschedule_auto() -> None:
+    def _schedule_auto(enabled: bool) -> None:
         nonlocal unsub_auto
         if unsub_auto:
             unsub_auto()
             unsub_auto = None
-            _LOGGER.info("UniFi WAN: auto speedtest disabled")
+        
+        if enabled:
+            unsub_auto = async_track_time_interval(
+                hass, _auto_speedtest_callback, timedelta(minutes=max(1, auto_minutes))
+            )
+            _LOGGER.debug("Auto speedtest scheduled every %s min", auto_minutes)
 
-    if auto_enabled_runtime:
-        _schedule_auto()
+    _schedule_auto(auto_enabled)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "client": client,
@@ -243,15 +244,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "site": site,
         "dev_meta": dev_meta,
         "auto_unsub": unsub_auto,
-        "auto_enabled": auto_enabled_runtime,
-        "enable_auto": lambda: (
-            _schedule_auto(),
-            hass.data[DOMAIN][entry.entry_id].update({"auto_enabled": True}),
-        ),
-        "disable_auto": lambda: (
-            _unschedule_auto(),
-            hass.data[DOMAIN][entry.entry_id].update({"auto_enabled": False}),
-        ),
+        "manage_auto": _schedule_auto,
         "run_speedtest_now": _run_speedtest_now,
         "speedtest_running_signal": entry_signal,
         "get_speedtest_running": lambda: speedtest_running,
@@ -259,23 +252,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
+    async def handle_run_speedtest(call: ServiceCall):
+        await _run_speedtest_now()
+
+    hass.services.async_register(DOMAIN, SERVICE_RUN_SPEEDTEST, handle_run_speedtest)
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
     shared = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if shared and shared.get("auto_unsub"):
-        shared["auto_unsub"]()
+    if shared:
+        shared["manage_auto"](False)
+        
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+    
+    if not hass.data[DOMAIN]:
+        hass.services.async_remove(DOMAIN, SERVICE_RUN_SPEEDTEST)
+
     return unload_ok
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle config entry options updates by delegating to HA reload."""
     await hass.config_entries.async_reload(entry.entry_id)

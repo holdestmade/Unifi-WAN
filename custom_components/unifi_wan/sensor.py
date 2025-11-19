@@ -22,14 +22,14 @@ from .const import (
     DOMAIN,
     CONF_MONTH_RESET_DAY,
     DEFAULT_MONTH_RESET_DAY,
-    GATEWAY_DEVICES
+    GATEWAY_DEVICES,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def _pick_gateway(payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Pick the primary gateway device (UDM/UGW)."""
+    """Pick the primary gateway device (UDM/UGW/UXG)."""
     if not isinstance(payload, dict):
         return None
     data = payload.get("data")
@@ -169,12 +169,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         UniFiWanIPv4(device, entry, host, site, devname, meta),
         UniFiWanIPv6(device, entry, host, site, devname, meta),
+
+        UniFiWan1IPv4(device, entry, host, site, devname, meta),
+        UniFiWan1IPv6(device, entry, host, site, devname, meta),
+        UniFiWan2IPv4(device, entry, host, site, devname, meta),
+        UniFiWan2IPv6(device, entry, host, site, devname, meta),
+
         UniFiWanDownMbps(rates, entry, host, site, devname, meta),
         UniFiWanUpMbps(rates, entry, host, site, devname, meta),
+
         UniFiWanDownloadToday(rates, entry, host, site, devname, meta),
         UniFiWanUploadToday(rates, entry, host, site, devname, meta),
         UniFiWanDownloadMonth(rates, entry, host, site, devname, meta, reset_day),
         UniFiWanUploadMonth(rates, entry, host, site, devname, meta, reset_day),
+
         UniFiSpeedtestDown(device, entry, host, site, devname, meta),
         UniFiSpeedtestUp(device, entry, host, site, devname, meta),
         UniFiSpeedtestPing(device, entry, host, site, devname, meta),
@@ -248,6 +256,66 @@ class UniFiWanIPv6(UniFiBaseEntity):
         return (gw or {}).get("uplink", {}).get("ip6")
 
 
+class UniFiWan1IPv4(UniFiBaseEntity):
+    _attr_name = "UniFi WAN1 IPv4"
+    _attr_icon = "mdi:ip"
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan1_ipv4"
+
+    @property
+    def native_value(self):
+        gw = _pick_gateway(self.coordinator.data)
+        sec = _wan_section(gw, "wan1") or {}
+        return sec.get("ip")
+
+
+class UniFiWan1IPv6(UniFiBaseEntity):
+    _attr_name = "UniFi WAN1 IPv6"
+    _attr_icon = "mdi:ip-network-outline"
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan1_ipv6"
+
+    @property
+    def native_value(self):
+        gw = _pick_gateway(self.coordinator.data)
+        sec = _wan_section(gw, "wan1") or {}
+        return sec.get("ip6")
+
+
+class UniFiWan2IPv4(UniFiBaseEntity):
+    _attr_name = "UniFi WAN2 IPv4"
+    _attr_icon = "mdi:ip"
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan2_ipv4"
+
+    @property
+    def native_value(self):
+        gw = _pick_gateway(self.coordinator.data)
+        sec = _wan_section(gw, "wan2") or {}
+        return sec.get("ip")
+
+
+class UniFiWan2IPv6(UniFiBaseEntity):
+    _attr_name = "UniFi WAN2 IPv6"
+    _attr_icon = "mdi:ip-network-outline"
+
+    @property
+    def unique_id(self):
+        return f"{self._host}_{self._site}_wan2_ipv6"
+
+    @property
+    def native_value(self):
+        gw = _pick_gateway(self.coordinator.data)
+        sec = _wan_section(gw, "wan2") or {}
+        return sec.get("ip6")
+
+
 class UniFiWanDownMbps(UniFiBaseEntity):
     _attr_name = "UniFi WAN Download"
     _attr_native_unit_of_measurement = UnitOfDataRate.MEGABITS_PER_SECOND
@@ -268,15 +336,15 @@ class UniFiWanDownMbps(UniFiBaseEntity):
         except Exception:
             return None
 
-    @property
-    def extra_state_attributes(self):
-        gw = _pick_gateway(self.coordinator.data) or {}
-        uplink = gw.get("uplink") or {}
-        return {
-            "raw_rx_bytes_r": uplink.get("rx_bytes-r"),
-            "uplink_ifname": uplink.get("ifname"),
-            "uplink_ip": uplink.get("ip"),
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     gw = _pick_gateway(self.coordinator.data) or {}
+    #     uplink = gw.get("uplink") or {}
+    #     return {
+    #         "raw_rx_bytes_r": uplink.get("rx_bytes-r"),
+    #         "uplink_ifname": uplink.get("ifname"),
+    #         "uplink_ip": uplink.get("ip"),
+    #     }
 
 
 class UniFiWanUpMbps(UniFiBaseEntity):
@@ -299,15 +367,15 @@ class UniFiWanUpMbps(UniFiBaseEntity):
         except Exception:
             return None
 
-    @property
-    def extra_state_attributes(self):
-        gw = _pick_gateway(self.coordinator.data) or {}
-        uplink = gw.get("uplink") or {}
-        return {
-            "raw_tx_bytes_r": uplink.get("tx_bytes-r"),
-            "uplink_ifname": uplink.get("ifname"),
-            "uplink_ip": uplink.get("ip"),
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     gw = _pick_gateway(self.coordinator.data) or {}
+    #     uplink = gw.get("uplink") or {}
+    #     return {
+    #         "raw_tx_bytes_r": uplink.get("tx_bytes-r"),
+    #         "uplink_ifname": uplink.get("ifname"),
+    #         "uplink_ip": uplink.get("ip"),
+    #     }
 
 
 class _BaseTotalMB(UniFiBaseEntity, RestoreSensor):
@@ -420,6 +488,7 @@ class UniFiWanDownloadToday(_BaseTotalMB):
         today_str = now.date().isoformat()
 
         if self._day_str != today_str:
+            # New day – reset within period (baseline will be re-set next update)
             self._day_str = today_str
             self._base_bytes = None
             self._value_mb = 0.0
@@ -428,13 +497,13 @@ class UniFiWanDownloadToday(_BaseTotalMB):
         self._update_from_counter()
         self.async_write_ha_state()
 
-    @property
-    def extra_state_attributes(self):
-        return {
-            "day": self._day_str,
-            "base_bytes": self._base_bytes,
-            "offset_mb": self._value_offset_mb,
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     return {
+    #         "day": self._day_str,
+    #         "base_bytes": self._base_bytes,
+    #         "offset_mb": self._value_offset_mb,
+    #     }
 
 
 class UniFiWanUploadToday(_BaseTotalMB):
@@ -493,13 +562,13 @@ class UniFiWanUploadToday(_BaseTotalMB):
         self._update_from_counter()
         self.async_write_ha_state()
 
-    @property
-    def extra_state_attributes(self):
-        return {
-            "day": self._day_str,
-            "base_bytes": self._base_bytes,
-            "offset_mb": self._value_offset_mb,
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     return {
+    #         "day": self._day_str,
+    #         "base_bytes": self._base_bytes,
+    #         "offset_mb": self._value_offset_mb,
+    #     }
 
 
 class UniFiWanDownloadMonth(_BaseTotalMB):
@@ -571,14 +640,14 @@ class UniFiWanDownloadMonth(_BaseTotalMB):
         self._update_from_counter()
         self.async_write_ha_state()
 
-    @property
-    def extra_state_attributes(self):
-        return {
-            "period_start": self._period_start.isoformat() if self._period_start else None,
-            "reset_day": self._reset_day,
-            "base_bytes": self._base_bytes,
-            "offset_mb": self._value_offset_mb,
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     return {
+    #         "period_start": self._period_start.isoformat() if self._period_start else None,
+    #         "reset_day": self._reset_day,
+    #         "base_bytes": self._base_bytes,
+    #         "offset_mb": self._value_offset_mb,
+    #     }
 
 
 class UniFiWanUploadMonth(_BaseTotalMB):
@@ -650,14 +719,14 @@ class UniFiWanUploadMonth(_BaseTotalMB):
         self._update_from_counter()
         self.async_write_ha_state()
 
-    @property
-    def extra_state_attributes(self):
-        return {
-            "period_start": self._period_start.isoformat() if self._period_start else None,
-            "reset_day": self._reset_day,
-            "base_bytes": self._base_bytes,
-            "offset_mb": self._value_offset_mb,
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     return {
+    #         "period_start": self._period_start.isoformat() if self._period_start else None,
+    #         "reset_day": self._reset_day,
+    #         "base_bytes": self._base_bytes,
+    #         "offset_mb": self._value_offset_mb,
+    #     }
 
 
 class UniFiSpeedtestDown(UniFiBaseEntity):
@@ -683,17 +752,17 @@ class UniFiSpeedtestDown(UniFiBaseEntity):
         except Exception:
             return None
 
-    @property
-    def extra_state_attributes(self):
-        gw = _pick_gateway(self.coordinator.data)
-        uplink = (gw or {}).get("uplink") or {}
-        ts = int(uplink.get("speedtest_lastrun") or 0)
-        if ts == 0:
-            return {"status": None, "ping_ms": None}
-        return {
-            "status": uplink.get("speedtest_status"),
-            "ping_ms": uplink.get("speedtest_ping"),
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     gw = _pick_gateway(self.coordinator.data)
+    #     uplink = (gw or {}).get("uplink") or {}
+    #     ts = int(uplink.get("speedtest_lastrun") or 0)
+    #     if ts == 0:
+    #         return {"status": None, "ping_ms": None}
+    #     return {
+    #         "status": uplink.get("speedtest_status"),
+    #         "ping_ms": uplink.get("speedtest_ping"),
+    #     }
 
 
 class UniFiSpeedtestUp(UniFiBaseEntity):
@@ -783,16 +852,16 @@ class UniFiActiveWanName(UniFiBaseEntity):
             return f"{comment} - ({name})"
         return comment or name or None
 
-    @property
-    def extra_state_attributes(self):
-        gw = _pick_gateway(self.coordinator.data) or {}
-        uplink = gw.get("uplink") or {}
-        return {
-            "uplink_comment": uplink.get("comment"),
-            "uplink_name": uplink.get("name"),
-            "uplink_ip": uplink.get("ip"),
-            "uplink_up": uplink.get("up"),
-        }
+    # @property
+    # def extra_state_attributes(self):
+    #     gw = _pick_gateway(self.coordinator.data) or {}
+    #     uplink = gw.get("uplink") or {}
+    #     return {
+    #         "uplink_comment": uplink.get("comment"),
+    #         "uplink_name": uplink.get("name"),
+    #         "uplink_ip": uplink.get("ip"),
+    #         "uplink_up": uplink.get("up"),
+    #     }
 
 
 class UniFiActiveWanId(UniFiBaseEntity):
@@ -809,26 +878,26 @@ class UniFiActiveWanId(UniFiBaseEntity):
         wan_id, _ = _infer_active_wan_id(gw)
         return wan_id
 
-    @property
-    def extra_state_attributes(self):
-        gw = _pick_gateway(self.coordinator.data)
-        wan_id, dbg = _infer_active_wan_id(gw)
-        sec: dict[str, Any] = {}
-        if wan_id == "WAN1":
-            sec = _wan_section(gw, "wan1") or {}
-        elif wan_id == "WAN2":
-            sec = _wan_section(gw, "wan2") or {}
-        elif wan_id == "WAN":
-            sec = _wan_section(gw, "wan") or {}
+    # @property
+    # def extra_state_attributes(self):
+    #     gw = _pick_gateway(self.coordinator.data)
+    #     wan_id, dbg = _infer_active_wan_id(gw)
+    #     sec: dict[str, Any] = {}
+    #     if wan_id == "WAN1":
+    #         sec = _wan_section(gw, "wan1") or {}
+    #     elif wan_id == "WAN2":
+    #         sec = _wan_section(gw, "wan2") or {}
+    #     elif wan_id == "WAN":
+    #         sec = _wan_section(gw, "wan") or {}
 
-        return {
-            "source_section": dbg.get("match"),
-            "uplink_ip": dbg.get("uplink_ip"),
-            "uplink_ifname": dbg.get("uplink_ifname"),
-            "uplink_name": dbg.get("uplink_name"),
-            "uplink_comment": dbg.get("uplink_comment"),
-            "section_ip": sec.get("ip"),
-            "section_ifname": sec.get("ifname"),
-            "section_type": sec.get("type"),
-            "section_up": sec.get("up"),
-        }
+    #     return {
+    #         "source_section": dbg.get("match"),
+    #         "uplink_ip": dbg.get("uplink_ip"),
+    #         "uplink_ifname": dbg.get("uplink_ifname"),
+    #         "uplink_name": dbg.get("uplink_name"),
+    #         "uplink_comment": dbg.get("uplink_comment"),
+    #         "section_ip": sec.get("ip"),
+    #         "section_ifname": sec.get("ifname"),
+    #         "section_type": sec.get("type"),
+    #         "section_up": sec.get("up"),
+    #     }

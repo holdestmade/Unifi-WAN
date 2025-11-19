@@ -31,14 +31,18 @@ It does not support:
 
 **WAN status & rates**
 
-- **UniFi WAN IPv4**  
-  - Current WAN IPv4 address  
-- **UniFi WAN IPv6**  
-  - Current WAN IPv6 address (if present)  
+- **UniFi WAN1 IPv4**  
+  - Current WAN1 IPv4 address  
+- **UniFi WAN1 IPv6**  
+  - Current WAN1 IPv6 address (if present)
+- **UniFi WAN2 IPv4**  
+  - Current WAN2 IPv4 address (if present) 
+- **UniFi WAN2 IPv6**  
+  - Current WAN2 IPv6 address (if present)  
 - **UniFi WAN Download**  
   - Current downstream rate in **Mbit/s**  
 - **UniFi WAN Upload**  
-  - Current upstream rate in **Mbit/s**  
+  - Current upstream rate in **Mbit/s**
 
 **WAN data usage (integrated totals)**
 
@@ -87,7 +91,8 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 
 ### Binary sensors
 
-- **UniFi WAN Internet**  
+- **UniFi WAN1 Internet**
+- **UniFi WAN2 Internet**  
 - **UniFi Active WAN Up**  
 - **UniFi WAN1 Link**  
 - **UniFi WAN2 Link**  

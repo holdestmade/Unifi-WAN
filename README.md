@@ -44,23 +44,6 @@ It does not support:
 - **UniFi WAN Upload**  
   - Current upstream rate in **Mbit/s**
 
-**WAN data usage (integrated totals)**
-
-These are calculated from the live WAN rates (`rx_bytes-r` / `tx_bytes-r`) and updated on every fast-rate poll. They survive Home Assistant restarts via `RestoreSensor` and keep counting even if the UniFi gateway reboots and clears its WAN byte counters.
-
-- **UniFi WAN Download Today**  
-  - Total WAN download **today** in **MB**  
-  - Resets automatically at local midnight  
-- **UniFi WAN Upload Today**  
-  - Total WAN upload **today** in **MB**  
-  - Resets automatically at local midnight  
-- **UniFi WAN Download This Month**  
-  - Total WAN download for the **current billing month** in **MB**  
-  - Resets on a **configurable “month reset day”** (e.g. 11th)  
-- **UniFi WAN Upload This Month**  
-  - Total WAN upload for the **current billing month** in **MB**  
-  - Resets on the same **month reset day**  
-
 **Speedtest**
 
 Speedtest values are taken from the gateway’s `uplink` section after a speedtest completes.
@@ -162,13 +145,6 @@ All options are available via the integration’s **Options** UI and can be chan
   - Enable/disable automatic speedtests entirely.
 - **Auto speedtest interval (minutes)** (default **60**)  
   - How often to trigger an automatic speedtest when enabled.
-
-**WAN monthly totals**
-
-- **Month reset day** (1–31, default **1**)  
-  - Defines the **billing month** for the “This Month” total sensors.  
-  - Example: If set to `11`, the billing period runs from the **11th → 10th** of the next month.  
-  - Download/Upload “This Month” sensors reset whenever a new billing period starts.
 
 ---
 

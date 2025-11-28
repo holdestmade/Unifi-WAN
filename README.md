@@ -6,7 +6,6 @@ Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud
 ## Features
 
 - Live WAN status, IP information and throughput sensors
-- Daily and monthly usage totals that persist across Home Assistant restarts and survive UniFi gateway counter resets
 - Speedtest automation with manual triggers and binary sensors for insight into the test lifecycle
 
 Primary UniFi Network API endpoints used:

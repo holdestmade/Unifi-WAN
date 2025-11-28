@@ -6,6 +6,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.data_entry_flow import FlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
@@ -18,14 +19,12 @@ from .const import (
     CONF_VERIFY_SSL,
     CONF_SCAN_INTERVAL,
     CONF_RATE_INTERVAL,
-    CONF_MONTH_RESET_DAY,
     CONF_AUTO_SPEEDTEST,
     CONF_AUTO_SPEEDTEST_MINUTES,
     DEFAULT_SITE,
     DEFAULT_VERIFY_SSL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_RATE_INTERVAL,
-    DEFAULT_MONTH_RESET_DAY,
     DEFAULT_AUTO_SPEEDTEST,
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
 )
@@ -55,7 +54,9 @@ async def _async_validate(
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -72,21 +73,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if auto_minutes < 1:
                 auto_minutes = 1
 
-            month_reset_day = int(
-                user_input.get(CONF_MONTH_RESET_DAY, DEFAULT_MONTH_RESET_DAY)
-            )
-            if month_reset_day < 1:
-                month_reset_day = 1
-            if month_reset_day > 31:
-                month_reset_day = 31
-
             try:
                 await _async_validate(self.hass, host, api_key, site, verify_ssl)
             except Exception as e:
                 _LOGGER.warning("Validation failed: %s", e)
                 errors["base"] = "cannot_connect"
             else:
-                unique_id = f"{host.strip().rstrip('/')}-{(site or DEFAULT_SITE).strip()}"
+                unique_id = (
+                    f"{host.strip().rstrip('/')}-{(site or DEFAULT_SITE).strip()}"
+                )
                 await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
@@ -98,7 +93,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_VERIFY_SSL: verify_ssl,
                         CONF_AUTO_SPEEDTEST: auto_enable,
                         CONF_AUTO_SPEEDTEST_MINUTES: auto_minutes,
-                        CONF_MONTH_RESET_DAY: month_reset_day,
                     },
                 )
 
@@ -115,17 +109,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_AUTO_SPEEDTEST_MINUTES,
                     default=DEFAULT_AUTO_SPEEDTEST_MINUTES,
                 ): int,
-                vol.Optional(
-                    CONF_MONTH_RESET_DAY, default=DEFAULT_MONTH_RESET_DAY
-                ): int,
             }
         )
-        return self.async_show_form(step_id="user", data_schema=data_schema, errors=errors)
+        return self.async_show_form(
+            step_id="user", data_schema=data_schema, errors=errors
+        )
 
-    async def async_step_import(self, user_input: dict[str, Any] | None = None):
+    async def async_step_import(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         return await self.async_step_user(user_input)
 
-    async def async_step_reauth(self, user_input: dict[str, Any] | None = None):
+    async def async_step_reauth(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         return await self.async_step_user(user_input)
 
     @staticmethod
@@ -137,7 +134,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, entry: config_entries.ConfigEntry) -> None:
         self.entry = entry
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         opts = self.entry.options
         data = self.entry.data
 
@@ -145,9 +144,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             host = user_input.get(
                 CONF_HOST, opts.get(CONF_HOST, data.get(CONF_HOST, ""))
             )
-            api_key = user_input.get(
-                CONF_API_KEY, opts.get(CONF_API_KEY, data.get(CONF_API_KEY, ""))
-            )
+            api_key = user_input.get(CONF_API_KEY)
+            if not api_key:
+                api_key = opts.get(CONF_API_KEY, data.get(CONF_API_KEY, ""))
             site = user_input.get(
                 CONF_SITE, opts.get(CONF_SITE, data.get(CONF_SITE, DEFAULT_SITE))
             )
@@ -176,15 +175,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                 )
             )
-            month_reset_day = int(
-                user_input.get(
-                    CONF_MONTH_RESET_DAY,
-                    opts.get(
-                        CONF_MONTH_RESET_DAY,
-                        data.get(CONF_MONTH_RESET_DAY, DEFAULT_MONTH_RESET_DAY),
-                    ),
-                )
-            )
 
             if scan_interval < 5:
                 scan_interval = 5
@@ -192,10 +182,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 rate_interval = 1
             if auto_minutes < 1:
                 auto_minutes = 1
-            if month_reset_day < 1:
-                month_reset_day = 1
-            if month_reset_day > 31:
-                month_reset_day = 31
 
             errors: dict[str, str] = {}
             try:
@@ -214,7 +200,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     rate_interval=rate_interval,
                     auto_enable=auto_enable,
                     auto_minutes=auto_minutes,
-                    month_reset_day=month_reset_day,
                 )
                 return self.async_show_form(
                     step_id="init", data_schema=schema, errors=errors
@@ -228,7 +213,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             user_input[CONF_RATE_INTERVAL] = rate_interval
             user_input[CONF_AUTO_SPEEDTEST] = auto_enable
             user_input[CONF_AUTO_SPEEDTEST_MINUTES] = auto_minutes
-            user_input[CONF_MONTH_RESET_DAY] = month_reset_day
 
             return self.async_create_entry(title="", data=user_input)
 
@@ -245,19 +229,24 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         rate_interval: int | None = None,
         auto_enable: bool | None = None,
         auto_minutes: int | None = None,
-        month_reset_day: int | None = None,
     ):
         opts = self.entry.options
         data = self.entry.data
 
-        host_default = host if host is not None else opts.get(
-            CONF_HOST, data.get(CONF_HOST, "")
+        host_default = (
+            host
+            if host is not None
+            else opts.get(CONF_HOST, data.get(CONF_HOST, ""))
         )
-        api_default = api_key if api_key is not None else opts.get(
-            CONF_API_KEY, data.get(CONF_API_KEY, "")
+        api_default = (
+            api_key
+            if api_key is not None
+            else opts.get(CONF_API_KEY, data.get(CONF_API_KEY, ""))
         )
-        site_default = site if site is not None else opts.get(
-            CONF_SITE, data.get(CONF_SITE, DEFAULT_SITE)
+        site_default = (
+            site
+            if site is not None
+            else opts.get(CONF_SITE, data.get(CONF_SITE, DEFAULT_SITE))
         )
         verify_default = (
             verify_ssl
@@ -295,14 +284,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ),
             )
         )
-        month_reset_default = (
-            month_reset_day
-            if month_reset_day is not None
-            else opts.get(
-                CONF_MONTH_RESET_DAY,
-                data.get(CONF_MONTH_RESET_DAY, DEFAULT_MONTH_RESET_DAY),
-            )
-        )
 
         return vol.Schema(
             {
@@ -317,9 +298,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_AUTO_SPEEDTEST, default=auto_default): bool,
                 vol.Optional(
                     CONF_AUTO_SPEEDTEST_MINUTES, default=auto_min_default
-                ): int,
-                vol.Optional(
-                    CONF_MONTH_RESET_DAY, default=month_reset_default
                 ): int,
             }
         )

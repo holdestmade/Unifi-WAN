@@ -1,40 +1,39 @@
 from __future__ import annotations
 
+from typing import Final
+
 from homeassistant.const import Platform
 
-DOMAIN = "unifi_wan"
+DOMAIN: Final = "unifi_wan"
 
-CONF_HOST = "host"
-CONF_API_KEY = "api_key"
-CONF_SITE = "site"
-CONF_VERIFY_SSL = "verify_ssl"
+CONF_HOST: Final = "host"
+CONF_API_KEY: Final = "api_key"
+CONF_SITE: Final = "site"
+CONF_VERIFY_SSL: Final = "verify_ssl"
 
-CONF_SCAN_INTERVAL = "scan_interval"
-DEFAULT_SCAN_INTERVAL = 30
-LEGACY_CONF_DEVICE_INTERVAL = "device_interval"
+CONF_SCAN_INTERVAL: Final = "scan_interval"
+DEFAULT_SCAN_INTERVAL: Final = 30
+LEGACY_CONF_DEVICE_INTERVAL: Final = "device_interval"
 
-CONF_RATE_INTERVAL = "rate_interval_seconds"
-DEFAULT_RATE_INTERVAL = 5
+CONF_RATE_INTERVAL: Final = "rate_interval_seconds"
+DEFAULT_RATE_INTERVAL: Final = 5
 
-CONF_MONTH_RESET_DAY = "month_reset_day"
-DEFAULT_MONTH_RESET_DAY = 1
+CONF_AUTO_SPEEDTEST: Final = "auto_speedtest"
+CONF_AUTO_SPEEDTEST_MINUTES: Final = "auto_speedtest_minutes"
+DEFAULT_AUTO_SPEEDTEST: Final = True
+DEFAULT_AUTO_SPEEDTEST_MINUTES: Final = 60
 
-CONF_AUTO_SPEEDTEST = "auto_speedtest"
-CONF_AUTO_SPEEDTEST_MINUTES = "auto_speedtest_minutes"
-DEFAULT_AUTO_SPEEDTEST = True
-DEFAULT_AUTO_SPEEDTEST_MINUTES = 60
+DEFAULT_SITE: Final = "default"
+DEFAULT_VERIFY_SSL: Final = False
 
-DEFAULT_SITE = "default"
-DEFAULT_VERIFY_SSL = False
-
-PLATFORMS = [
+PLATFORMS: Final = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.SWITCH,
 ]
 
-SIGNAL_SPEEDTEST_RUNNING = f"{DOMAIN}_speedtest_running"
-SERVICE_RUN_SPEEDTEST = "run_speedtest"
+SIGNAL_SPEEDTEST_RUNNING: Final = f"{DOMAIN}_speedtest_running"
+SERVICE_RUN_SPEEDTEST: Final = "run_speedtest"
 
-GATEWAY_DEVICES = ["udm", "ugw", "uxg", "uxg-pro"]
+GATEWAY_DEVICES: Final = ["udm", "ugw", "uxg", "uxg-pro"]

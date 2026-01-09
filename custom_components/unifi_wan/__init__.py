@@ -119,7 +119,7 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
         if wan_interface == "WAN":
             wan_numbers.add(1)
         elif wan_interface.startswith("WAN"):
-            wan_interface.add(int(wan_interface[3:]))
+            wan_numbers.add(int(wan_interface[3:]))
 
     wan = {}
     for wan_number in wan_numbers:

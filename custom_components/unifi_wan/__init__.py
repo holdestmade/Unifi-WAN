@@ -42,8 +42,7 @@ class UniFiWanData:
     devices: list[dict]
     gateway: dict[str, Any] | None
     uplink: dict[str, Any]
-    wan1: dict[str, Any]
-    wan2: dict[str, Any]
+    wan: dict[int, dict[str, Any]]
 
 class UnifiWanClient:
     """Simple HTTP client for UniFi Network endpoints."""
@@ -113,15 +112,27 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
             break
     
     uplink = (gateway.get("uplink") or {}) if gateway else {}
-    wan1 = (gateway.get("wan1") or gateway.get("wan")) if gateway else {}
-    wan2 = gateway.get("wan2") if gateway else {}
+    wan_interfaces = (gateway.get("last_wan_interfaces") or {}).keys()
+
+    wan_numbers = set()
+    for wan_interface in wan_interfaces:
+        if wan_interface == "WAN":
+            wan_numbers.add(1)
+        elif wan_interface.startswith("WAN"):
+            wan_interface.add(int(wan_interface[3:]))
+
+    wan = {}
+    for wan_number in wan_numbers:
+        if wan_number == 1:
+            wan[1] = (gateway.get("wan1") or gateway.get("wan")) if gateway else {}
+        else:
+            wan[wan_number] = gateway.get("wan" + str(wan_number)) if gateway else {}
 
     return UniFiWanData(
         devices=devices,
         gateway=gateway,
         uplink=uplink,
-        wan1=wan1 or {},
-        wan2=wan2 or {}
+        wan=wan
     )
 
 
@@ -146,6 +157,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Fetch and process data."""
         raw = await client.get_devices()
         return _extract_wan_data(raw)
+
+    wan_numbers = (await _update_devices()).wan.keys()
 
     device_coordinator = DataUpdateCoordinator(
         hass,
@@ -249,6 +262,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "speedtest_running_signal": entry_signal,
         "get_speedtest_running": lambda: speedtest_running,
         "set_speedtest_running": set_speedtest_running,
+        "wan_numbers": wan_numbers
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -55,7 +55,11 @@ def _wan_id(d: UniFiWanData) -> str:
             if u_ip == d.wan[wan_number].get("ip"):
                 return f"WAN{wan_number}"
     for wan_number in d.wan.keys():
-        if d.wan[wan_number].get("up"):
+        if d.wan[wan_number].get("up") and all(
+            not other_data.get("up")
+            for other_num, other_data in d.wan.items()
+            if other_num != wan_number
+        ):
             return f"WAN{wan_number}"
     return "Unknown"
 

@@ -51,15 +51,17 @@ def _wan_id(d: UniFiWanData) -> str:
     """Infer Active WAN ID."""
     u_ip = d.uplink.get("ip")
     if u_ip:
-        if u_ip == d.wan1.get("ip"):
-            return "WAN1"
-        if u_ip == d.wan2.get("ip"):
-            return "WAN2"
-    if d.wan1.get("up") and not d.wan2.get("up"):
-        return "WAN1"
-    if d.wan2.get("up") and not d.wan1.get("up"):
-        return "WAN2"
-    return "WAN1" if d.wan1.get("up") else "Unknown"
+        for wan_number in d.wan.keys():
+            if u_ip == d.wan[wan_number].get("ip"):
+                return f"WAN{wan_number}"
+    for wan_number in d.wan.keys():
+        if d.wan[wan_number].get("up") and all(
+            not other_data.get("up")
+            for other_num, other_data in d.wan.items()
+            if other_num != wan_number
+        ):
+            return f"WAN{wan_number}"
+    return "Unknown"
 
 
 def _wan_name(d: UniFiWanData) -> str:
@@ -83,30 +85,6 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         name="UniFi WAN IPv6",
         icon="mdi:ip-network-outline",
         value_fn=lambda d: d.uplink.get("ip6") or "unknown",
-    ),
-    UniFiSensorDescription(
-        key="wan1_ipv4",
-        name="UniFi WAN1 IPv4",
-        icon="mdi:ip",
-        value_fn=lambda d: d.wan1.get("ip") or "unknown",
-    ),
-    UniFiSensorDescription(
-        key="wan1_ipv6",
-        name="UniFi WAN1 IPv6",
-        icon="mdi:ip-network-outline",
-        value_fn=lambda d: d.wan1.get("ip6") or "unknown",
-    ),
-    UniFiSensorDescription(
-        key="wan2_ipv4",
-        name="UniFi WAN2 IPv4",
-        icon="mdi:ip",
-        value_fn=lambda d: d.wan2.get("ip") or "unknown",
-    ),
-    UniFiSensorDescription(
-        key="wan2_ipv6",
-        name="UniFi WAN2 IPv6",
-        icon="mdi:ip-network-outline",
-        value_fn=lambda d: d.wan2.get("ip6") or "unknown",
     ),
     UniFiSensorDescription(
         key="wan_down_mbps",
@@ -188,6 +166,7 @@ async def async_setup_entry(
     site = shared["site"]
     meta = shared["dev_meta"]
     devname = f"UniFi WAN ({host} / {site})"
+    wan_numbers = shared["wan_numbers"]
 
     entities: list[UniFiGenericSensor] = []
 
@@ -203,6 +182,46 @@ async def async_setup_entry(
                 devname,
                 meta,
                 desc,
+            )
+        )
+
+    for wan_number in wan_numbers:
+        ipv4 = UniFiSensorDescription(
+            key=f"wan{wan_number}_ipv4",
+            name=f"UniFi WAN{wan_number} IPv4",
+            icon="mdi:ip",
+            value_fn=lambda d: d.wan[wan_number].get("ip") or "unknown",
+        )
+        coord: DataUpdateCoordinator = (
+            rates_coord if "mbps" in ipv4.key else device_coord
+        )
+        entities.append(
+            UniFiGenericSensor(
+                coord,
+                host,
+                site,
+                devname,
+                meta,
+                ipv4,
+            )
+        )
+        ipv6 = UniFiSensorDescription(
+            key=f"wan{wan_number}_ipv6",
+            name=f"UniFi WAN{wan_number} IPv6",
+            icon="mdi:ip-network-outline",
+            value_fn=lambda d: d.wan[wan_number].get("ip6") or "unknown",
+        )
+        coord: DataUpdateCoordinator = (
+            rates_coord if "mbps" in ipv6.key else device_coord
+        )
+        entities.append(
+            UniFiGenericSensor(
+                coord,
+                host,
+                site,
+                devname,
+                meta,
+                ipv6,
             )
         )
 

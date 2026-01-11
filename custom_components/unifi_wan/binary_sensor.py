@@ -33,31 +33,7 @@ BINARY_SENSORS: tuple[UniFiBinaryEntityDescription, ...] = (
         name="UniFi Active WAN Up",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda d: bool(d.uplink.get("up")),
-    ),
-    UniFiBinaryEntityDescription(
-        key="wan1_internet",
-        name="UniFi WAN1 Internet",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=lambda d: bool(d.wan1.get("ip")),
-    ),
-    UniFiBinaryEntityDescription(
-        key="wan2_internet",
-        name="UniFi WAN2 Internet",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=lambda d: bool(d.wan2.get("ip")),
-    ),
-    UniFiBinaryEntityDescription(
-        key="wan1_link",
-        name="UniFi WAN1 Link",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=lambda d: bool(d.wan1.get("up")),
-    ),
-    UniFiBinaryEntityDescription(
-        key="wan2_link",
-        name="UniFi WAN2 Link",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=lambda d: bool(d.wan2.get("up")),
-    ),
+    )
 )
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
@@ -68,10 +44,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     host = shared["host"]
     site = shared["site"]
     devname = f"UniFi WAN ({host} / {site})"
+    wan_numbers = shared["wan_numbers"]
 
     entities = []
     for desc in BINARY_SENSORS:
         entities.append(UniFiGenericBinary(device, host, site, devname, meta, desc))
+
+    for wan_number in wan_numbers:
+        internet = UniFiBinaryEntityDescription(
+            key=f"wan{wan_number}_internet",
+            name=f"UniFi WAN{wan_number} Internet",
+            device_class=BinarySensorDeviceClass.CONNECTIVITY,
+            value_fn=lambda d: bool(d.wan[wan_number].get("ip")),
+        )
+        entities.append(UniFiGenericBinary(device, host, site, devname, meta, internet))
+        link = UniFiBinaryEntityDescription(
+            key=f"wan{wan_number}_link",
+            name=f"UniFi WAN{wan_number} Link",
+            device_class=BinarySensorDeviceClass.CONNECTIVITY,
+            value_fn=lambda d: bool(d.wan[wan_number].get("up")),
+        )
+        entities.append(UniFiGenericBinary(device, host, site, devname, meta, link))
 
     entities.append(UniFiSpeedtestInProgress(shared, host, site, devname, meta))
     async_add_entities(entities)

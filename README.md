@@ -30,18 +30,16 @@ It does not support:
 
 **WAN status & rates**
 
-- **UniFi WAN1 IPv4**  
-  - Current WAN1 IPv4 address  
-- **UniFi WAN1 IPv6**  
-  - Current WAN1 IPv6 address (if present)
-- **UniFi WAN2 IPv4**  
-  - Current WAN2 IPv4 address (if present) 
-- **UniFi WAN2 IPv6**  
-  - Current WAN2 IPv6 address (if present)  
+- **UniFi WAN\* IPv4**  
+  - Current WAN\* IPv4 address  
+- **UniFi WAN\* IPv6**  
+  - Current WAN\* IPv6 address (if present)
 - **UniFi WAN Download**  
   - Current downstream rate in **Mbit/s**  
 - **UniFi WAN Upload**  
   - Current upstream rate in **Mbit/s**
+
+*\*One for each available WAN interface*
 
 **Speedtest**
 
@@ -61,7 +59,7 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 - **UniFi Active WAN Name**  
   - Human-friendly description of the currently active WAN  
 - **UniFi Active WAN ID**  
-  - Logical ID of the active WAN: `WAN1`, `WAN2`, `WAN`, or `unknown`  
+  - Logical ID of the active WAN (e.g. `WAN1`), or `Unknown`  
   - Heuristically derived from:
     - IP matches
     - Interface name matches
@@ -73,14 +71,14 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 
 ### Binary sensors
 
-- **UniFi WAN1 Internet**
-- **UniFi WAN2 Internet**  
+- **UniFi WAN\* Internet**
 - **UniFi Active WAN Up**  
-- **UniFi WAN1 Link**  
-- **UniFi WAN2 Link**  
+- **UniFi WAN\* Link**  
 - **UniFi Speedtest In Progress**  
   - `on` while an integration-triggered speedtest command is running  
   - Turns off once results have been pulled and sensors refreshed
+
+*\*One for each available WAN interface*
 
 ---
 

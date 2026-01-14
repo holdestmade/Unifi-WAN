@@ -190,7 +190,7 @@ async def async_setup_entry(
             key=f"wan{wan_number}_ipv4",
             name=f"UniFi WAN{wan_number} IPv4",
             icon="mdi:ip",
-            value_fn=lambda d: d.wan[wan_number].get("ip") or "unknown",
+            value_fn=lambda d, wn=wan_number: d.wan[wn].get("ip") or "unknown",
         )
         coord: DataUpdateCoordinator = (
             rates_coord if "mbps" in ipv4.key else device_coord
@@ -209,7 +209,7 @@ async def async_setup_entry(
             key=f"wan{wan_number}_ipv6",
             name=f"UniFi WAN{wan_number} IPv6",
             icon="mdi:ip-network-outline",
-            value_fn=lambda d: d.wan[wan_number].get("ip6") or "unknown",
+            value_fn=lambda d, wn=wan_number: d.wan[wn].get("ip6") or "unknown",
         )
         coord: DataUpdateCoordinator = (
             rates_coord if "mbps" in ipv6.key else device_coord

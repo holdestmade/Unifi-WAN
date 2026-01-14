@@ -55,14 +55,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             key=f"wan{wan_number}_internet",
             name=f"UniFi WAN{wan_number} Internet",
             device_class=BinarySensorDeviceClass.CONNECTIVITY,
-            value_fn=lambda d: bool(d.wan[wan_number].get("ip")),
+            value_fn=lambda d, wn=wan_number: bool(d.wan[wn].get("ip")),
         )
         entities.append(UniFiGenericBinary(device, host, site, devname, meta, internet))
         link = UniFiBinaryEntityDescription(
             key=f"wan{wan_number}_link",
             name=f"UniFi WAN{wan_number} Link",
             device_class=BinarySensorDeviceClass.CONNECTIVITY,
-            value_fn=lambda d: bool(d.wan[wan_number].get("up")),
+            value_fn=lambda d, wn=wan_number: bool(d.wan[wn].get("up")),
         )
         entities.append(UniFiGenericBinary(device, host, site, devname, meta, link))
 

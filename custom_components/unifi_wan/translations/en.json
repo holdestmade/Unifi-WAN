@@ -33,7 +33,7 @@
           "site": "Site",
           "verify_ssl": "Verify SSL Certificate",
           "scan_interval": "Scan Interval (seconds)",
-          "rate_interval_seconds": "Rate Interval (seconds)",
+          "rate_interval_seconds": "Rate Interval (seconds, 0 to disable)",
           "auto_speedtest": "Run Speedtest Automatically",
           "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)",
           "month_reset_day": "Month Reset Day"

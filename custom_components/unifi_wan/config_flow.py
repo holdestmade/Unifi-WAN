@@ -178,8 +178,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             if scan_interval < 5:
                 scan_interval = 5
-            if rate_interval < 1:
-                rate_interval = 1
+            if rate_interval < 0:
+                rate_interval = 0
             if auto_minutes < 1:
                 auto_minutes = 1
 

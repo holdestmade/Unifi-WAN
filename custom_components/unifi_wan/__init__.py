@@ -177,7 +177,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         dev_meta["mac"] = gw.get("mac")
 
     rates_coordinator: Optional[DataUpdateCoordinator] = None
-    if dev_meta["mac"]:
+    if dev_meta["mac"] and rate_seconds > 0:
         mac = dev_meta["mac"]
         async def _update_rates():
             raw = await client.get_device(mac)
@@ -188,7 +188,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER,
             name=f"{DOMAIN}_rates",
             update_method=_update_rates,
-            update_interval=timedelta(seconds=max(1, rate_seconds)),
+            update_interval=timedelta(seconds=rate_seconds),
         )
         await rates_coordinator.async_config_entry_first_refresh()
 

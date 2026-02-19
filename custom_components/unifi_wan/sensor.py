@@ -28,6 +28,7 @@ class UniFiSensorDescription(SensorEntityDescription):
     """Description for UniFi Sensors."""
 
     value_fn: Callable[[UniFiWanData], Any] = lambda x: None
+    use_rate_coordinator: bool = False
 
 
 def _mbps(val: Any) -> float:
@@ -94,10 +95,30 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r", 0)),
+        use_rate_coordinator=True,
     ),
     UniFiSensorDescription(
         key="wan_up_mbps",
         name="UniFi WAN Upload",
+        icon="mdi:upload",
+        device_class=SensorDeviceClass.DATA_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        value_fn=lambda d: _mbps(d.uplink.get("tx_bytes-r", 0)),
+        use_rate_coordinator=True,
+    ),
+    UniFiSensorDescription(
+        key="wan_down_mbps_scan_interval",
+        name="UniFi WAN Download (Scan Interval)",
+        icon="mdi:download",
+        device_class=SensorDeviceClass.DATA_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r", 0)),
+    ),
+    UniFiSensorDescription(
+        key="wan_up_mbps_scan_interval",
+        name="UniFi WAN Upload (Scan Interval)",
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -172,7 +193,7 @@ async def async_setup_entry(
 
     for desc in SENSORS:
         coord: DataUpdateCoordinator = (
-            rates_coord if "mbps" in desc.key else device_coord
+            rates_coord if desc.use_rate_coordinator else device_coord
         )
         entities.append(
             UniFiGenericSensor(
@@ -193,7 +214,7 @@ async def async_setup_entry(
             value_fn=lambda d, wn=wan_number: d.wan[wn].get("ip") or "unknown",
         )
         coord: DataUpdateCoordinator = (
-            rates_coord if "mbps" in ipv4.key else device_coord
+            rates_coord if ipv4.use_rate_coordinator else device_coord
         )
         entities.append(
             UniFiGenericSensor(
@@ -212,7 +233,7 @@ async def async_setup_entry(
             value_fn=lambda d, wn=wan_number: d.wan[wn].get("ip6") or "unknown",
         )
         coord: DataUpdateCoordinator = (
-            rates_coord if "mbps" in ipv6.key else device_coord
+            rates_coord if ipv6.use_rate_coordinator else device_coord
         )
         entities.append(
             UniFiGenericSensor(

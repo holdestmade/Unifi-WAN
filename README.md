@@ -36,8 +36,16 @@ It does not support:
   - Current WAN\* IPv6 address (if present)
 - **UniFi WAN Download**  
   - Current downstream rate in **Mbit/s**  
+  - Updates on the **Fast WAN rate interval**
 - **UniFi WAN Upload**  
-  - Current upstream rate in **Mbit/s**
+  - Current upstream rate in **Mbit/s**  
+  - Updates on the **Fast WAN rate interval**
+- **UniFi WAN Download (Scan Interval)**  
+  - Current downstream rate in **Mbit/s**  
+  - Updates on the **Scan interval**
+- **UniFi WAN Upload (Scan Interval)**  
+  - Current upstream rate in **Mbit/s**  
+  - Updates on the **Scan interval**
 
 *\*One for each available WAN interface*
 
@@ -133,8 +141,9 @@ All options are available via the integration’s **Options** UI and can be chan
   - UniFi API limit is ~100 calls per minute per API key.
 - **Fast WAN rate interval (seconds)**  
   - Poll interval for the per-gateway endpoint: `stat/device/<mac>`  
-  - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** & **totals integration**.  
-  - Set this to **0** to disable fast per-second polling entirely (recommended if you only care about slower-changing totals).  
+  - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** (`UniFi WAN Download` / `UniFi WAN Upload`) and totals integration.  
+  - Scan-interval WAN rate sensors (`UniFi WAN Download (Scan Interval)` / `UniFi WAN Upload (Scan Interval)`) continue updating on the Scan interval even when this is disabled.  
+  - Set this to **0** to disable fast per-second polling entirely.  
   - You can set this to **1–2 seconds** for near real-time graphs when needed.
 
 **Speedtest automation**

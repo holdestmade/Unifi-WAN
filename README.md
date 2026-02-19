@@ -134,7 +134,8 @@ All options are available via the integration’s **Options** UI and can be chan
 - **Fast WAN rate interval (seconds)**  
   - Poll interval for the per-gateway endpoint: `stat/device/<mac>`  
   - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** & **totals integration**.  
-  - You can safely set this to **1–2 seconds** for near real-time graphs, as it is only a single device request.
+  - Set this to **0** to disable fast per-second polling entirely (recommended if you only care about slower-changing totals).  
+  - You can set this to **1–2 seconds** for near real-time graphs when needed.
 
 **Speedtest automation**
 

@@ -10,7 +10,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
     SensorEntityDescription,
 )
-from homeassistant.const import UnitOfTime, UnitOfDataRate
+from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -21,6 +21,9 @@ from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN
 from .__init__ import UniFiWanData
+
+
+DATA_RATE_UNIT_MEGABITS_PER_SECOND: Final = "Mbit/s"
 
 
 @dataclass
@@ -93,7 +96,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r", 0)),
         use_rate_coordinator=True,
     ),
@@ -103,7 +106,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("tx_bytes-r", 0)),
         use_rate_coordinator=True,
     ),
@@ -113,7 +116,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r", 0)),
     ),
     UniFiSensorDescription(
@@ -122,7 +125,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("tx_bytes-r", 0)),
     ),
     UniFiSensorDescription(
@@ -131,7 +134,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
         value_fn=lambda d: d.uplink.get("xput_down"),
     ),
     UniFiSensorDescription(
@@ -140,7 +143,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
         value_fn=lambda d: d.uplink.get("xput_up"),
     ),
     UniFiSensorDescription(

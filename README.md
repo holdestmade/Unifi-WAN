@@ -1,7 +1,7 @@
 # UniFi WAN
 Home Assistant custom component
 
-Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud key) / UGW / etc.)
+Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud key) / UGW / EFG etc.)
 
 ## Features
 
@@ -18,7 +18,7 @@ Get the API key from your UniFi Console UI:
 
 > **Settings → Control Plane → Integrations → API Keys**
 
-This integration currently only supports UniFi OS consoles (UDM, UDR, UDM Pro, UXG, etc.) using a local API key generated on the console, and the /proxy/network/api endpoints.
+This integration currently only supports UniFi OS consoles (UDM, UDR, UDM Pro, UXG, UFG etc.) using a local API key generated on the console, and the /proxy/network/api endpoints.
 It does not support:
 - Standalone UniFi Network running in a VM or Docker without UniFi OS.
 - API keys generated on unifi.ui.com for cloud-only access.

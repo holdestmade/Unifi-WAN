@@ -23,7 +23,7 @@ from .const import DOMAIN
 from .__init__ import UniFiWanData
 
 
-DATA_RATE_UNIT_MEGABITS_PER_SECOND: Final = "Mbps"
+DATA_RATE_UNIT_MEGABITS_PER_SECOND: Final = "Mbit/s"
 
 
 @dataclass

@@ -93,8 +93,12 @@ class UnifiWanClient:
     async def get_device(self, mac: str) -> dict:
         return await self.get_json(f"stat/device/{mac}")
 
-    async def run_speedtest(self, mac: str) -> dict:
-        return await self.post_json("cmd/devmgr", {"cmd": "speedtest", "mac": mac})
+    async def run_speedtest(self, mac: str, wan_number: int | None = None) -> dict:
+        payload: dict = {"cmd": "speedtest", "mac": mac}
+        if wan_number is not None:
+            # UniFi API uses "wan" for WAN1 and "wan{n}" for WAN2+
+            payload["interface"] = "wan" if wan_number == 1 else f"wan{wan_number}"
+        return await self.post_json("cmd/devmgr", payload)
 
 
 def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
@@ -206,8 +210,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         speedtest_running = is_running
         _dispatch_running()
 
-    async def _run_speedtest_now() -> None:
-        """Trigger a speedtest."""
+    async def _run_speedtest_now(wan_number: int | None = None) -> None:
+        """Trigger a speedtest, optionally on a specific WAN interface."""
         gw_data = device_coordinator.data
         mac_local = gw_data.gateway.get("mac") if gw_data.gateway else None
         
@@ -222,7 +226,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         await set_speedtest_running(True)
         try:
-            await client.run_speedtest(mac_local)
+            await client.run_speedtest(mac_local, wan_number)
             await asyncio.sleep(15) 
         except Exception as e:
             _LOGGER.error("Speedtest trigger failed: %s", e)

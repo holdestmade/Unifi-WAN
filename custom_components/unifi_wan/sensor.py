@@ -249,6 +249,56 @@ async def async_setup_entry(
             )
         )
 
+        speedtest_down = UniFiSensorDescription(
+            key=f"wan{wan_number}_speedtest_down",
+            name=f"UniFi WAN{wan_number} Speedtest Download",
+            icon="mdi:download",
+            device_class=SensorDeviceClass.DATA_RATE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+            value_fn=lambda d, wn=wan_number: d.wan[wn].get("xput_down"),
+        )
+        entities.append(
+            UniFiGenericSensor(device_coord, host, site, devname, meta, speedtest_down)
+        )
+
+        speedtest_up = UniFiSensorDescription(
+            key=f"wan{wan_number}_speedtest_up",
+            name=f"UniFi WAN{wan_number} Speedtest Upload",
+            icon="mdi:upload",
+            device_class=SensorDeviceClass.DATA_RATE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+            value_fn=lambda d, wn=wan_number: d.wan[wn].get("xput_up"),
+        )
+        entities.append(
+            UniFiGenericSensor(device_coord, host, site, devname, meta, speedtest_up)
+        )
+
+        speedtest_ping = UniFiSensorDescription(
+            key=f"wan{wan_number}_speedtest_ping",
+            name=f"UniFi WAN{wan_number} Speedtest Ping",
+            icon="mdi:timer",
+            device_class=SensorDeviceClass.DURATION,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+            value_fn=lambda d, wn=wan_number: d.wan[wn].get("speedtest_ping"),
+        )
+        entities.append(
+            UniFiGenericSensor(device_coord, host, site, devname, meta, speedtest_ping)
+        )
+
+        speedtest_last_run = UniFiSensorDescription(
+            key=f"wan{wan_number}_speedtest_last_run",
+            name=f"UniFi WAN{wan_number} Speedtest Last Run",
+            icon="mdi:clock-outline",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            value_fn=lambda d, wn=wan_number: _ts_date(d.wan[wn].get("speedtest_lastrun")),
+        )
+        entities.append(
+            UniFiGenericSensor(device_coord, host, site, devname, meta, speedtest_last_run)
+        )
+
     async_add_entities(entities)
 
 

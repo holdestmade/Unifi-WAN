@@ -31,6 +31,7 @@ from .const import (
     LEGACY_CONF_DEVICE_INTERVAL,
     SIGNAL_SPEEDTEST_RUNNING,
     GATEWAY_DEVICES,
+    MAX_WAN_INTERFACES,
     SERVICE_RUN_SPEEDTEST,
 )
 
@@ -101,6 +102,25 @@ class UnifiWanClient:
         return await self.post_json("cmd/devmgr", payload)
 
 
+def _get_ip6_from(data: dict[str, Any]) -> str | None:
+    """Extract an IPv6 address from a data dict, trying multiple field names and formats."""
+    for key in ("ip6", "ip6_address", "ipv6_address"):
+        val = data.get(key)
+        if val and isinstance(val, str):
+            return val
+    for key in ("ip6_addresses", "ipv6_addresses"):
+        val = data.get(key)
+        if val and isinstance(val, list):
+            for entry in val:
+                if isinstance(entry, str) and entry:
+                    return entry
+                if isinstance(entry, dict):
+                    addr = entry.get("address") or entry.get("ip6") or entry.get("ip")
+                    if addr and isinstance(addr, str):
+                        return addr
+    return None
+
+
 def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
     """Process raw JSON into a structured object once."""
     devices = []
@@ -118,31 +138,57 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
     uplink = dict((gateway.get("uplink") or {}) if gateway else {})
     wan_interfaces = (gateway.get("last_wan_interfaces") or {}).keys()
 
-    wan_numbers = set()
+    wan_numbers: set[int] = set()
     for wan_interface in wan_interfaces:
         if wan_interface == "WAN":
             wan_numbers.add(1)
         elif wan_interface.startswith("WAN"):
-            wan_numbers.add(int(wan_interface[3:]))
+            try:
+                wan_numbers.add(int(wan_interface[3:]))
+            except ValueError:
+                pass
 
-    wan = {}
+    # Fallback: if last_wan_interfaces is absent, detect WAN entries directly from gateway
+    if not wan_numbers and gateway:
+        if gateway.get("wan1") or gateway.get("wan"):
+            wan_numbers.add(1)
+        for i in range(2, MAX_WAN_INTERFACES + 1):
+            if gateway.get(f"wan{i}"):
+                wan_numbers.add(i)
+
+    wan: dict[int, dict[str, Any]] = {}
     for wan_number in wan_numbers:
         if wan_number == 1:
-            wan[1] = dict((gateway.get("wan1") or gateway.get("wan") or {}) if gateway else {})
+            raw = (gateway.get("wan1") or gateway.get("wan") or {}) if gateway else {}
         else:
-            wan[wan_number] = dict(gateway.get("wan" + str(wan_number)) or {}) if gateway else {}
+            raw = (gateway.get(f"wan{wan_number}") or {}) if gateway else {}
+        wan_entry = dict(raw)
+        # Normalise IPv6 into the canonical "ip6" key for uniform sensor access
+        if not wan_entry.get("ip6"):
+            ip6 = _get_ip6_from(wan_entry)
+            if ip6:
+                wan_entry["ip6"] = ip6
+        wan[wan_number] = wan_entry
 
     # Supplement uplink IPv6 from WAN data or gateway-level fields if not directly present
     if gateway and not uplink.get("ip6"):
-        active_ip = uplink.get("ip")
-        for wan_data in wan.values():
-            if not wan_data:
-                continue
-            if active_ip and wan_data.get("ip") != active_ip:
-                continue
-            if wan_data.get("ip6"):
-                uplink["ip6"] = wan_data["ip6"]
-                break
+        ip6 = _get_ip6_from(uplink)
+        if not ip6:
+            # Try matching active WAN by IPv4 first, then fall back to any WAN with IPv6
+            active_ip = uplink.get("ip")
+            for wan_data in wan.values():
+                if not wan_data:
+                    continue
+                if active_ip and wan_data.get("ip") != active_ip:
+                    continue
+                ip6 = wan_data.get("ip6") or _get_ip6_from(wan_data)
+                if ip6:
+                    break
+        # Last resort: check gateway root-level IPv6 fields
+        if not ip6:
+            ip6 = _get_ip6_from(gateway)
+        if ip6:
+            uplink["ip6"] = ip6
 
     return UniFiWanData(
         devices=devices,

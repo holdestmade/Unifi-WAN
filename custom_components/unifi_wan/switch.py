@@ -1,279 +1,56 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from dataclasses import dataclass
-from typing import Any, Callable, Final
+from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-    SensorEntityDescription,
-)
-from homeassistant.const import UnitOfTime
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_ON
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN
-from .__init__ import UniFiWanData
-
-
-DATA_RATE_UNIT_MEGABITS_PER_SECOND: Final = "Mbit/s"
-
-
-@dataclass
-class UniFiSensorDescription(SensorEntityDescription):
-    """Description for UniFi Sensors."""
-
-    value_fn: Callable[[UniFiWanData], Any] = lambda x: None
-    use_rate_coordinator: bool = False
+from .const import DOMAIN, CONF_AUTO_SPEEDTEST
 
 
-def _mbps(val: Any) -> float:
-    try:
-        return round(float(val) * 8 / 1_000_000, 2)
-    except Exception:
-        return 0.0
-
-
-def _ts_date(val: Any) -> datetime | None:
-    try:
-        ts = int(val)
-        if ts > 0:
-            return datetime.fromtimestamp(ts, tz=timezone.utc)
-    except Exception:
-        pass
-    return None
-
-
-def _wan_id(d: UniFiWanData) -> str:
-    """Infer Active WAN ID."""
-    u_ip = d.uplink.get("ip")
-    if u_ip:
-        for wan_number in d.wan.keys():
-            if u_ip == d.wan[wan_number].get("ip"):
-                return f"WAN{wan_number}"
-    for wan_number in d.wan.keys():
-        if d.wan[wan_number].get("up") and all(
-            not other_data.get("up")
-            for other_num, other_data in d.wan.items()
-            if other_num != wan_number
-        ):
-            return f"WAN{wan_number}"
-    return "Unknown"
-
-
-def _wan_name(d: UniFiWanData) -> str:
-    """Get Active WAN Name."""
-    c = (d.uplink.get("comment") or "").strip()
-    n = (d.uplink.get("name") or "").strip()
-    if c and n and c.lower() != n.lower():
-        return f"{c} ({n})"
-    return c or n or "Unknown"
-
-
-SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
-    UniFiSensorDescription(
-        key="wan_ipv4",
-        name="UniFi WAN IPv4",
-        icon="mdi:ip",
-        value_fn=lambda d: d.uplink.get("ip") or "unknown",
-    ),
-    UniFiSensorDescription(
-        key="wan_ipv6",
-        name="UniFi WAN IPv6",
-        icon="mdi:ip-network-outline",
-        value_fn=lambda d: d.uplink.get("ip6") or "unknown",
-    ),
-    UniFiSensorDescription(
-        key="wan_down_mbps",
-        name="UniFi WAN Download",
-        icon="mdi:download",
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r", 0)),
-        use_rate_coordinator=True,
-    ),
-    UniFiSensorDescription(
-        key="wan_up_mbps",
-        name="UniFi WAN Upload",
-        icon="mdi:upload",
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: _mbps(d.uplink.get("tx_bytes-r", 0)),
-        use_rate_coordinator=True,
-    ),
-    UniFiSensorDescription(
-        key="wan_down_mbps_scan_interval",
-        name="UniFi WAN Download (Scan Interval)",
-        icon="mdi:download",
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r", 0)),
-    ),
-    UniFiSensorDescription(
-        key="wan_up_mbps_scan_interval",
-        name="UniFi WAN Upload (Scan Interval)",
-        icon="mdi:upload",
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: _mbps(d.uplink.get("tx_bytes-r", 0)),
-    ),
-    UniFiSensorDescription(
-        key="speedtest_down",
-        name="UniFi Speedtest Download",
-        icon="mdi:download",
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: d.uplink.get("xput_down"),
-    ),
-    UniFiSensorDescription(
-        key="speedtest_up",
-        name="UniFi Speedtest Upload",
-        icon="mdi:upload",
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: d.uplink.get("xput_up"),
-    ),
-    UniFiSensorDescription(
-        key="speedtest_ping",
-        name="UniFi Speedtest Ping",
-        icon="mdi:timer",
-        device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
-        value_fn=lambda d: d.uplink.get("speedtest_ping"),
-    ),
-    UniFiSensorDescription(
-        key="speedtest_last_run",
-        name="UniFi Speedtest Last Run",
-        icon="mdi:clock-outline",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=lambda d: _ts_date(d.uplink.get("speedtest_lastrun")),
-    ),
-    UniFiSensorDescription(
-        key="active_wan_id",
-        name="UniFi Active WAN ID",
-        icon="mdi:numeric",
-        value_fn=_wan_id,
-    ),
-    UniFiSensorDescription(
-        key="active_wan_name",
-        name="UniFi Active WAN Name",
-        icon="mdi:wan",
-        value_fn=_wan_name,
-    ),
-)
-
-
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     shared = hass.data[DOMAIN][entry.entry_id]
-    rates_coord = shared.get("rates_coordinator") or shared["device_coordinator"]
-    device_coord = shared["device_coordinator"]
-
+    meta = shared.get("dev_meta", {})
     host = shared["host"]
     site = shared["site"]
-    meta = shared["dev_meta"]
     devname = f"UniFi WAN ({host} / {site})"
-    wan_numbers = shared["wan_numbers"]
-
-    entities: list[UniFiGenericSensor] = []
-
-    for desc in SENSORS:
-        coord: DataUpdateCoordinator = (
-            rates_coord if desc.use_rate_coordinator else device_coord
-        )
-        entities.append(
-            UniFiGenericSensor(
-                coord,
-                host,
-                site,
-                devname,
-                meta,
-                desc,
-            )
-        )
-
-    for wan_number in wan_numbers:
-        ipv4 = UniFiSensorDescription(
-            key=f"wan{wan_number}_ipv4",
-            name=f"UniFi WAN{wan_number} IPv4",
-            icon="mdi:ip",
-            value_fn=lambda d, wn=wan_number: d.wan[wn].get("ip") or "unknown",
-        )
-        coord: DataUpdateCoordinator = (
-            rates_coord if ipv4.use_rate_coordinator else device_coord
-        )
-        entities.append(
-            UniFiGenericSensor(
-                coord,
-                host,
-                site,
-                devname,
-                meta,
-                ipv4,
-            )
-        )
-        ipv6 = UniFiSensorDescription(
-            key=f"wan{wan_number}_ipv6",
-            name=f"UniFi WAN{wan_number} IPv6",
-            icon="mdi:ip-network-outline",
-            value_fn=lambda d, wn=wan_number: d.wan[wn].get("ip6") or "unknown",
-        )
-        coord: DataUpdateCoordinator = (
-            rates_coord if ipv6.use_rate_coordinator else device_coord
-        )
-        entities.append(
-            UniFiGenericSensor(
-                coord,
-                host,
-                site,
-                devname,
-                meta,
-                ipv6,
-            )
-        )
-
-    async_add_entities(entities)
+    async_add_entities([UniFiAutoSpeedtestSwitch(shared, entry, host, site, devname, meta)])
 
 
-class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
-    entity_description: UniFiSensorDescription
+class UniFiAutoSpeedtestSwitch(SwitchEntity, RestoreEntity):
+    _attr_name = "UniFi WAN Auto Speedtest"
+    _attr_icon = "mdi:speedometer-slow"
+    _attr_should_poll = False
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
+        shared: dict[str, Any],
+        entry: ConfigEntry,
         host: str,
         site: str,
         devname: str,
         meta: dict[str, Any],
-        description: UniFiSensorDescription,
-    ) -> None:
-        super().__init__(coordinator)
+    ):
+        self._shared = shared
+        self._entry = entry
         self._host = host
         self._site = site
         self._devname = devname
         self._meta = meta
-        self.entity_description = description
+
+    async def async_added_to_hass(self) -> None:
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            is_on = last_state.state == STATE_ON
+            self._shared["manage_auto"](is_on)
+            self._shared["auto_enabled"] = is_on
 
     @property
     def unique_id(self) -> str:
-        return f"{self._host}_{self._site}_{self.entity_description.key}"
+        return f"{self._host}_{self._site}_auto_speedtest_enabled"
 
     @property
     def device_info(self) -> dict[str, Any]:
@@ -282,10 +59,22 @@ class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
             "name": self._devname,
             "manufacturer": "Ubiquiti",
             "model": self._meta.get("model"),
-            "sw_version": self._meta.get("sw_version"),
-            "configuration_url": f"https://{self._host}/",
         }
 
     @property
-    def native_value(self) -> Any:
-        return self.entity_description.value_fn(self.coordinator.data)
+    def is_on(self) -> bool:
+        return bool(self._shared.get("auto_enabled", False))
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._shared["manage_auto"](True)
+        self._shared["auto_enabled"] = True
+        self.async_write_ha_state()
+        new_options = {**self._entry.options, CONF_AUTO_SPEEDTEST: True}
+        self.hass.config_entries.async_update_entry(self._entry, options=new_options)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self._shared["manage_auto"](False)
+        self._shared["auto_enabled"] = False
+        self.async_write_ha_state()
+        new_options = {**self._entry.options, CONF_AUTO_SPEEDTEST: False}
+        self.hass.config_entries.async_update_entry(self._entry, options=new_options)

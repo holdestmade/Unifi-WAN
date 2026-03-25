@@ -115,7 +115,7 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
             gateway = candidates[0]
             break
     
-    uplink = (gateway.get("uplink") or {}) if gateway else {}
+    uplink = dict((gateway.get("uplink") or {}) if gateway else {})
     wan_interfaces = (gateway.get("last_wan_interfaces") or {}).keys()
 
     wan_numbers = set()
@@ -128,9 +128,21 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
     wan = {}
     for wan_number in wan_numbers:
         if wan_number == 1:
-            wan[1] = (gateway.get("wan1") or gateway.get("wan")) if gateway else {}
+            wan[1] = dict((gateway.get("wan1") or gateway.get("wan") or {}) if gateway else {})
         else:
-            wan[wan_number] = gateway.get("wan" + str(wan_number)) if gateway else {}
+            wan[wan_number] = dict(gateway.get("wan" + str(wan_number)) or {}) if gateway else {}
+
+    # Supplement uplink IPv6 from WAN data or gateway-level fields if not directly present
+    if gateway and not uplink.get("ip6"):
+        active_ip = uplink.get("ip")
+        for wan_data in wan.values():
+            if not wan_data:
+                continue
+            if active_ip and wan_data.get("ip") != active_ip:
+                continue
+            if wan_data.get("ip6"):
+                uplink["ip6"] = wan_data["ip6"]
+                break
 
     return UniFiWanData(
         devices=devices,
@@ -260,6 +272,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "host": host,
         "site": site,
         "dev_meta": dev_meta,
+        "auto_enabled": auto_enabled,
         "auto_unsub": unsub_auto,
         "manage_auto": _schedule_auto,
         "run_speedtest_now": _run_speedtest_now,

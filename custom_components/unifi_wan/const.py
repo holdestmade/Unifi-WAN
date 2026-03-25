@@ -1,52 +1,39 @@
 from __future__ import annotations
 
-from homeassistant.components.button import ButtonEntity
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from typing import Final
 
-from .const import DOMAIN
+from homeassistant.const import Platform
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    shared = hass.data[DOMAIN][entry.entry_id]
-    device_coord = shared["device_coordinator"]
-    meta = shared.get("dev_meta", {})
-    
-    host = shared["host"]
-    site = shared["site"]
-    devname = f"UniFi WAN ({host} / {site})"
+DOMAIN: Final = "unifi_wan"
 
-    async_add_entities([RunSpeedtestButton(device_coord, shared, host, site, devname, meta)])
+CONF_HOST: Final = "host"
+CONF_API_KEY: Final = "api_key"
+CONF_SITE: Final = "site"
+CONF_VERIFY_SSL: Final = "verify_ssl"
 
+CONF_SCAN_INTERVAL: Final = "scan_interval"
+DEFAULT_SCAN_INTERVAL: Final = 30
+LEGACY_CONF_DEVICE_INTERVAL: Final = "device_interval"
 
-class RunSpeedtestButton(CoordinatorEntity, ButtonEntity):
-    _attr_name = "UniFi Run Speedtest"
-    _attr_icon = "mdi:speedometer"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+CONF_RATE_INTERVAL: Final = "rate_interval_seconds"
+DEFAULT_RATE_INTERVAL: Final = 5
 
-    def __init__(self, coordinator, shared, host, site, devname, meta):
-        super().__init__(coordinator)
-        self._shared = shared
-        self._host = host
-        self._site = site
-        self._devname = devname
-        self._meta = meta
+CONF_AUTO_SPEEDTEST: Final = "auto_speedtest"
+CONF_AUTO_SPEEDTEST_MINUTES: Final = "auto_speedtest_minutes"
+DEFAULT_AUTO_SPEEDTEST: Final = True
+DEFAULT_AUTO_SPEEDTEST_MINUTES: Final = 60
 
-    @property
-    def unique_id(self):
-        return f"{self._host}_{self._site}_run_speedtest"
+DEFAULT_SITE: Final = "default"
+DEFAULT_VERIFY_SSL: Final = False
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._host, self._site)},
-            "name": self._devname,
-            "manufacturer": "Ubiquiti",
-            "model": self._meta.get("model"),
-        }
+PLATFORMS: Final = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SWITCH,
+]
 
-    async def async_press(self) -> None:
-        runner = self._shared.get("run_speedtest_now")
-        if callable(runner):
-            await runner()
+SIGNAL_SPEEDTEST_RUNNING: Final = f"{DOMAIN}_speedtest_running"
+SERVICE_RUN_SPEEDTEST: Final = "run_speedtest"
+
+GATEWAY_DEVICES: Final = ["udm", "ugw", "uxg", "uxg-pro"]

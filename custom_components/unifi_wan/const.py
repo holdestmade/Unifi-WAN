@@ -36,4 +36,5 @@ PLATFORMS: Final = [
 SIGNAL_SPEEDTEST_RUNNING: Final = f"{DOMAIN}_speedtest_running"
 SERVICE_RUN_SPEEDTEST: Final = "run_speedtest"
 
-GATEWAY_DEVICES: Final = ["udm", "ugw", "uxg", "uxg-pro"]
+GATEWAY_DEVICES: Final = ["udm", "ugw", "uxg", "uxg-pro", "ucg-ultra", "ucg"]
+MAX_WAN_INTERFACES: Final = 4

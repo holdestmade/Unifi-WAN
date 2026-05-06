@@ -143,21 +143,41 @@ def _log_raw_payload(payload: dict[str, Any] | None, devices: list[dict]) -> Non
     )
 
 
+def _is_routable_ipv6(addr: str | None) -> bool:
+    """True only for public/ULA IPv6 addresses worth exposing as a WAN IP.
+    Skips link-local (fe80::/10), loopback (::1), unspecified (::) and
+    obvious junk so we don't mislead users into thinking they have IPv6
+    when their ISP only auto-assigned a link-local.
+    """
+    if not addr or not isinstance(addr, str):
+        return False
+    a = addr.strip().lower().split("%", 1)[0].split("/", 1)[0]
+    if not a or ":" not in a:
+        return False
+    if a in ("::", "::1"):
+        return False
+    if a.startswith("fe8") or a.startswith("fe9") or a.startswith("fea") or a.startswith("feb"):
+        return False
+    return True
+
+
 def _get_ip6_from(data: dict[str, Any]) -> str | None:
-    """Extract an IPv6 address from a data dict, trying multiple field names and formats."""
+    """Extract a routable IPv6 address from a data dict, trying multiple
+    field names and formats. Link-local addresses are ignored.
+    """
     for key in ("ip6", "ip6_address", "ipv6_address"):
         val = data.get(key)
-        if val and isinstance(val, str):
+        if isinstance(val, str) and _is_routable_ipv6(val):
             return val
     for key in ("ipv6", "ip6_addresses", "ipv6_addresses"):
         val = data.get(key)
         if val and isinstance(val, list):
             for entry in val:
-                if isinstance(entry, str) and entry:
+                if isinstance(entry, str) and _is_routable_ipv6(entry):
                     return entry
                 if isinstance(entry, dict):
                     addr = entry.get("address") or entry.get("ip6") or entry.get("ip")
-                    if addr and isinstance(addr, str):
+                    if isinstance(addr, str) and _is_routable_ipv6(addr):
                         return addr
     return None
 

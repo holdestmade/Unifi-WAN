@@ -78,6 +78,19 @@ def _wan_name(d: UniFiWanData) -> str:
     return c or n or "Unknown"
 
 
+def _speedtest_interface(d: UniFiWanData) -> str:
+    """Return the controller-reported speedtest interface, or fall back
+    to the active WAN ID. Newer/older controller versions don't always
+    populate uplink.speedtest_interface, but the speedtest always runs
+    against the active uplink so the active WAN ID is a safe fallback.
+    """
+    iface = d.uplink.get("speedtest_interface")
+    if iface:
+        return iface
+    active = _wan_id(d)
+    return active if active != "Unknown" else "unknown"
+
+
 SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     UniFiSensorDescription(
         key="wan_ipv4",
@@ -175,14 +188,14 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         key="speedtest_interface",
         name="UniFi Speedtest WAN Interface",
         icon="mdi:wan",
-        value_fn=lambda d: d.uplink.get("speedtest_interface") or "unknown",
+        value_fn=_speedtest_interface,
         attributes_fn=lambda d: {
-            "speedtest_interface": d.uplink.get("speedtest_interface"),
+            "raw_speedtest_interface": d.uplink.get("speedtest_interface"),
+            "derived_from_active_wan": not bool(d.uplink.get("speedtest_interface")),
             "speedtest_lastrun": d.uplink.get("speedtest_lastrun"),
             "speedtest_status": d.uplink.get("speedtest_status"),
             "xput_down": d.uplink.get("xput_down"),
             "xput_up": d.uplink.get("xput_up"),
-            "uplink_keys": sorted((d.uplink or {}).keys()),
         },
     ),
     UniFiSensorDescription(

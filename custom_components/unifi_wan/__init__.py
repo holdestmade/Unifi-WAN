@@ -149,7 +149,7 @@ def _get_ip6_from(data: dict[str, Any]) -> str | None:
         val = data.get(key)
         if val and isinstance(val, str):
             return val
-    for key in ("ip6_addresses", "ipv6_addresses"):
+    for key in ("ipv6", "ip6_addresses", "ipv6_addresses"):
         val = data.get(key)
         if val and isinstance(val, list):
             for entry in val:

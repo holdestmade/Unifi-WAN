@@ -31,6 +31,7 @@ class UniFiSensorDescription(SensorEntityDescription):
     """Description for UniFi Sensors."""
 
     value_fn: Callable[[UniFiWanData], Any] = lambda x: None
+    attributes_fn: Callable[[UniFiWanData], dict[str, Any] | None] | None = None
     use_rate_coordinator: bool = False
 
 
@@ -89,6 +90,14 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         name="UniFi WAN IPv6",
         icon="mdi:ip-network-outline",
         value_fn=lambda d: d.uplink.get("ip6") or "unknown",
+        attributes_fn=lambda d: {
+            "uplink_keys": sorted((d.uplink or {}).keys()),
+            "uplink_ip": d.uplink.get("ip"),
+            "uplink_ip6": d.uplink.get("ip6"),
+            "uplink_ip6_address": d.uplink.get("ip6_address"),
+            "uplink_ipv6_addresses": d.uplink.get("ipv6_addresses"),
+            "uplink_ip6_addresses": d.uplink.get("ip6_addresses"),
+        },
     ),
     UniFiSensorDescription(
         key="wan_down_mbps",
@@ -167,6 +176,14 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         name="UniFi Speedtest WAN Interface",
         icon="mdi:wan",
         value_fn=lambda d: d.uplink.get("speedtest_interface") or "unknown",
+        attributes_fn=lambda d: {
+            "speedtest_interface": d.uplink.get("speedtest_interface"),
+            "speedtest_lastrun": d.uplink.get("speedtest_lastrun"),
+            "speedtest_status": d.uplink.get("speedtest_status"),
+            "xput_down": d.uplink.get("xput_down"),
+            "xput_up": d.uplink.get("xput_up"),
+            "uplink_keys": sorted((d.uplink or {}).keys()),
+        },
     ),
     UniFiSensorDescription(
         key="active_wan_id",
@@ -230,6 +247,14 @@ async def async_setup_entry(
             name=f"UniFi WAN{wan_number} IPv6",
             icon="mdi:ip-network-outline",
             value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip6") or "unknown",
+            attributes_fn=lambda d, wn=wan_number: {
+                "wan_keys": sorted((d.wan.get(wn) or {}).keys()),
+                "ip": (d.wan.get(wn) or {}).get("ip"),
+                "ip6": (d.wan.get(wn) or {}).get("ip6"),
+                "ip6_address": (d.wan.get(wn) or {}).get("ip6_address"),
+                "ipv6_addresses": (d.wan.get(wn) or {}).get("ipv6_addresses"),
+                "ip6_addresses": (d.wan.get(wn) or {}).get("ip6_addresses"),
+            },
         )
         entities.append(
             UniFiGenericSensor(device_coord, host, site, devname, meta, ipv6)
@@ -275,3 +300,13 @@ class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return self.entity_description.value_fn(self.coordinator.data)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        fn = self.entity_description.attributes_fn
+        if fn is None:
+            return None
+        try:
+            return fn(self.coordinator.data)
+        except Exception:
+            return None

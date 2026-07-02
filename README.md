@@ -94,23 +94,24 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 
 - **UniFi WAN Auto Speedtest**  
   - Enables/disables the integration’s scheduled speedtest job  
-  - Toggling this switch updates the internal scheduler without needing to reconfigure the integration
+  - Toggling this switch is saved to the integration options, so it stays in sync with the **Run speedtest automatically** option and survives restarts
 
 ---
 
 ### Buttons
 
 - **Run UniFi Speedtest**
-  - Triggers a one-off speedtest on the active UniFi gateway  
-  - After a short delay, the integration refreshes `Speedtest` sensors with the latest results
+  - Triggers a one-off speedtest on the active UniFi gateway (plus one button per WAN interface)  
+  - The test runs in the background; the integration polls the controller until a new result is reported (up to 5 minutes) and then refreshes the `Speedtest` sensors. `UniFi Speedtest In Progress` stays `on` while it waits.
 
 ---
 
 ### Service
 
-- **Run UniFi Speedtest** 
-  - Triggers a one-off speedtest on the active UniFi gateway  
-  - After a short delay, the integration refreshes `Speedtest` sensors with the latest results
+- **`unifi_wan.run_speedtest`**
+  - Triggers a one-off speedtest on the UniFi gateway  
+  - Optional `wan` field selects a specific WAN interface (e.g. `2`); omit it to test the active WAN  
+  - The test runs in the background; sensors refresh automatically once the controller reports a new result
 
 ---
 

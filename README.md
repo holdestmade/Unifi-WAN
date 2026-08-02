@@ -62,18 +62,24 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 - **UniFi Speedtest Last Run**  
   - Timestamp of the last speedtest  
 
+**Per-WAN speedtest**
+
+The controller only stores the *latest* speedtest result, overwriting it on every run regardless of interface. The integration therefore attributes each completed run to a WAN interface — using the controller-reported speedtest interface where available, otherwise the interface the test was requested on, otherwise the active WAN — and keeps the last result per WAN. Values survive Home Assistant restarts and update only when a speedtest actually runs on that WAN.
+
+- **UniFi WAN\* Speedtest Download** (**Mbit/s**)  
+- **UniFi WAN\* Speedtest Upload** (**Mbit/s**)  
+- **UniFi WAN\* Speedtest Ping** (**ms**)  
+- **UniFi WAN\* Speedtest Last Run** (timestamp)
+
 **WAN identification**
 
-- **UniFi Active WAN Name**  
-  - Human-friendly description of the currently active WAN  
 - **UniFi Active WAN ID**  
   - Logical ID of the active WAN (e.g. `WAN1`), or `Unknown`  
-  - Heuristically derived from:
-    - IP matches
-    - Interface name matches
-    - WAN section `up` flags
-    - Legacy single-WAN `wan` section  
-  - Attributes include the chosen section IP/interface and the match reason for debugging.
+  - Derived by matching the uplink IP against each WAN section, then the uplink port name against each WAN section's interface name, then falling back to the only WAN that is up  
+  - Attributes include the resolved WAN, the match reason and the per-WAN IPs/interface names for debugging
+- **UniFi Active WAN Name**  
+  - Human-friendly description of the currently active WAN  
+  - Always derived from the same WAN section as **UniFi Active WAN ID**, so the two sensors can never point at different interfaces (in load-balanced dual-WAN setups the controller's uplink object can mix fields from both interfaces)
 
 ---
 
@@ -152,7 +158,8 @@ All options are available via the integration’s **Options** UI and can be chan
 - **Run speedtest automatically** (on/off, default **on**)  
   - Enable/disable automatic speedtests entirely.
 - **Auto speedtest interval (minutes)** (default **60**)  
-  - How often to trigger an automatic speedtest when enabled.
+  - How often to trigger an automatic speedtest when enabled.  
+  - With more than one WAN interface, each run cycles to the next WAN that currently has link, so every WAN accumulates its own per-WAN speedtest results over time. With a single WAN the plain speedtest command is used.
 
 ---
 

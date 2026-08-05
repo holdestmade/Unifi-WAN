@@ -48,7 +48,7 @@ It does not support:
   - Current upstream rate in **Mbit/s**  
   - Updates on the **Scan interval**
 
-*\*One for each available WAN interface*
+*\*One for each available WAN interface. These per-WAN entities are only created when the gateway has **more than one WAN** — with a single WAN they would restate the gateway-wide entities above.*
 
 **Speedtest**
 
@@ -69,6 +69,8 @@ Speedtest values are taken from the gateway’s `speedtest-status` block after a
 - **UniFi WAN\* Speedtest Upload** (**Mbit/s**)  
 - **UniFi WAN\* Speedtest Ping** (**ms**)  
 - **UniFi WAN\* Speedtest Last Run** (timestamp)
+
+These are only created when the gateway has **more than one WAN**. With a single WAN they would just restate the gateway-wide **UniFi Speedtest** sensors above, since the one WAN is always the one tested.
 
 Where these values come from depends on what the controller offers, and each sensor's `attributed_by` attribute records which route was used:
 
@@ -101,7 +103,7 @@ Values survive Home Assistant restarts and only change when a speedtest actually
   - `on` while an integration-triggered speedtest command is running  
   - Turns off once results have been pulled and sensors refreshed
 
-*\*One for each available WAN interface*
+*\*One for each available WAN interface. These per-WAN entities are only created when the gateway has **more than one WAN** — with a single WAN they would restate the gateway-wide entities above.*
 
 ---
 
@@ -116,7 +118,7 @@ Values survive Home Assistant restarts and only change when a speedtest actually
 ### Buttons
 
 - **Run UniFi Speedtest**
-  - Triggers a one-off speedtest on the active UniFi gateway (plus one button per WAN interface)  
+  - Triggers a one-off speedtest on the active UniFi gateway (plus one button per WAN interface, where the gateway has more than one WAN)  
   - The test runs in the background; the integration polls the controller until a new result is reported (up to 5 minutes) and then refreshes the `Speedtest` sensors. `UniFi Speedtest In Progress` stays `on` while it waits.
 
 ---

@@ -415,36 +415,40 @@ async def async_setup_entry(
         )
         entities.append(UniFiGenericSensor(coord, entry_id, device_info, desc))
 
-    for wan_number in wan_numbers:
-        ipv4 = UniFiSensorDescription(
-            key=f"wan{wan_number}_ipv4",
-            name=f"UniFi WAN{wan_number} IPv4",
-            icon="mdi:ip",
-            value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip") or "unknown",
-        )
-        entities.append(UniFiGenericSensor(device_coord, entry_id, device_info, ipv4))
-        ipv6 = UniFiSensorDescription(
-            key=f"wan{wan_number}_ipv6",
-            name=f"UniFi WAN{wan_number} IPv6",
-            icon="mdi:ip-network-outline",
-            value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip6") or "unknown",
-            attributes_fn=lambda d, wn=wan_number: {
-                "wan_keys": sorted((d.wan.get(wn) or {}).keys()),
-                "ip": (d.wan.get(wn) or {}).get("ip"),
-                "ip6": (d.wan.get(wn) or {}).get("ip6"),
-                "ip6_address": (d.wan.get(wn) or {}).get("ip6_address"),
-                "ipv6_addresses": (d.wan.get(wn) or {}).get("ipv6_addresses"),
-                "ip6_addresses": (d.wan.get(wn) or {}).get("ip6_addresses"),
-            },
-        )
-        entities.append(UniFiGenericSensor(device_coord, entry_id, device_info, ipv6))
-
-        for desc, field, transform in _wan_speedtest_descriptions(wan_number):
-            entities.append(
-                UniFiWanSpeedtestSensor(
-                    runtime, entry_id, device_info, desc, wan_number, field, transform
-                )
+    # Per-WAN sensors are only created on a multi-WAN gateway. With a single
+    # WAN that WAN is always the uplink, so each of these would just restate
+    # its gateway-wide counterpart above.
+    if len(wan_numbers) > 1:
+        for wan_number in wan_numbers:
+            ipv4 = UniFiSensorDescription(
+                key=f"wan{wan_number}_ipv4",
+                name=f"UniFi WAN{wan_number} IPv4",
+                icon="mdi:ip",
+                value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip") or "unknown",
             )
+            entities.append(UniFiGenericSensor(device_coord, entry_id, device_info, ipv4))
+            ipv6 = UniFiSensorDescription(
+                key=f"wan{wan_number}_ipv6",
+                name=f"UniFi WAN{wan_number} IPv6",
+                icon="mdi:ip-network-outline",
+                value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip6") or "unknown",
+                attributes_fn=lambda d, wn=wan_number: {
+                    "wan_keys": sorted((d.wan.get(wn) or {}).keys()),
+                    "ip": (d.wan.get(wn) or {}).get("ip"),
+                    "ip6": (d.wan.get(wn) or {}).get("ip6"),
+                    "ip6_address": (d.wan.get(wn) or {}).get("ip6_address"),
+                    "ipv6_addresses": (d.wan.get(wn) or {}).get("ipv6_addresses"),
+                    "ip6_addresses": (d.wan.get(wn) or {}).get("ip6_addresses"),
+                },
+            )
+            entities.append(UniFiGenericSensor(device_coord, entry_id, device_info, ipv6))
+
+            for desc, field, transform in _wan_speedtest_descriptions(wan_number):
+                entities.append(
+                    UniFiWanSpeedtestSensor(
+                        runtime, entry_id, device_info, desc, wan_number, field, transform
+                    )
+                )
 
     async_add_entities(entities)
 

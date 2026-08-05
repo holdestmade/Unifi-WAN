@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final
 
 import aiohttp
@@ -69,6 +69,9 @@ class UniFiWanData:
     wan_alive: dict[int, bool]
     wan_status: dict[int, str]
     speedtest: dict[str, Any]
+    # Per-WAN speedtest results straight from the controller, keyed by WAN
+    # number. Empty when the controller has no per-WAN speedtest API.
+    per_wan_speedtest: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -109,9 +112,15 @@ class UnifiWanClient:
         self.site = site or DEFAULT_SITE
         self.verify_ssl = bool(verify_ssl)
         self._session = async_get_clientsession(hass, self.verify_ssl)
+        # Set once the controller has told us it has no per-WAN speedtest
+        # API, so we stop asking on every poll.
+        self._speedtest_history_unsupported = False
 
     def _url(self, path: str) -> str:
         return f"https://{self.host}/proxy/network/api/s/{self.site}/{path}"
+
+    def _url_v2(self, path: str) -> str:
+        return f"https://{self.host}/proxy/network/v2/api/site/{self.site}/{path}"
 
     async def get_json(self, path: str) -> dict:
         url = self._url(path)
@@ -131,25 +140,62 @@ class UnifiWanClient:
         except Exception as e:
             raise UpdateFailed(f"Connection error: {e}") from e
 
-    async def post_json(self, path: str, payload: dict) -> dict:
-        url = self._url(path)
+    async def _post(self, url: str, payload: dict) -> tuple[int, Any]:
+        """POST and return (status, decoded body). Status 0 means the request
+        itself failed. A 200 with an empty or non-JSON body still counts as
+        accepted, so the body falls back to a plain ok marker.
+        """
         headers = {"X-API-Key": self.api_key}
         try:
             async with self._session.post(url, headers=headers, json=payload) as resp:
-                text = await resp.text()
-                if resp.status != 200:
-                    _LOGGER.error("HTTP %s for %s: %s", resp.status, url, text[:200])
-                    return {"ok": False}
                 try:
-                    return await resp.json(content_type=None)
+                    body = await resp.json(content_type=None)
                 except (aiohttp.ContentTypeError, ValueError):
-                    # A 200 with an empty or non-JSON body still means the
-                    # command was accepted; anything else propagates to the
-                    # outer handler below.
-                    return {"ok": True}
+                    body = {"ok": resp.status == 200}
+                if resp.status != 200:
+                    _LOGGER.debug("HTTP %s for %s", resp.status, url)
+                return resp.status, body
         except Exception as e:
             _LOGGER.error("POST failed: %s", e)
+            return 0, None
+
+    async def post_json(self, path: str, payload: dict) -> dict:
+        status, body = await self._post(self._url(path), payload)
+        if status != 200:
+            _LOGGER.error("HTTP %s for %s", status, self._url(path))
             return {"ok": False}
+        return body if isinstance(body, dict) else {"ok": True}
+
+    async def get_speedtest_history(self) -> dict | None:
+        """Per-WAN speedtest records from the v2 API, or None if this
+        controller does not offer them.
+
+        Unlike the gateway's single global result, this endpoint keeps a
+        record per WAN, which is the only way to know a non-active WAN's
+        own throughput. Older firmware answers 404/405 and is expected.
+        """
+        if self._speedtest_history_unsupported:
+            return None
+        url = self._url_v2("speedtest")
+        headers = {"X-API-Key": self.api_key}
+        try:
+            async with self._session.get(url, headers=headers) as resp:
+                if resp.status in (400, 401, 403, 404, 405):
+                    self._speedtest_history_unsupported = True
+                    _LOGGER.debug(
+                        "Per-WAN speedtest API unavailable (HTTP %s for %s); "
+                        "falling back to attributing the gateway's global result",
+                        resp.status,
+                        url,
+                    )
+                    return None
+                if resp.status != 200:
+                    return None
+                body = await resp.json(content_type=None)
+                return body if isinstance(body, dict) else None
+        except Exception as e:
+            _LOGGER.debug("Per-WAN speedtest fetch failed: %s", e)
+            return None
 
     async def get_devices(self) -> dict:
         return await self.get_json("stat/device")
@@ -157,12 +203,47 @@ class UnifiWanClient:
     async def get_device(self, mac: str) -> dict:
         return await self.get_json(f"stat/device/{mac}")
 
-    async def run_speedtest(self, mac: str, wan_number: int | None = None) -> dict:
-        payload: dict = {"cmd": "speedtest", "mac": mac}
-        if wan_number is not None:
-            # UniFi API uses "wan" for WAN1 and "wan{n}" for WAN2+
-            payload["interface"] = "wan" if wan_number == 1 else f"wan{wan_number}"
-        return await self.post_json("cmd/devmgr", payload)
+    async def run_speedtest(
+        self,
+        mac: str,
+        wan_number: int | None = None,
+        interface_name: str | None = None,
+    ) -> dict:
+        """Trigger a speedtest, optionally against a specific WAN.
+
+        A targeted run identifies the interface with "interface_name" (the
+        WAN's own ifname, e.g. "eth7"). Firmware differs over which endpoint
+        accepts it, so the known forms are tried in turn until one is not
+        rejected; a plain whole-gateway run keeps the single legacy call.
+        """
+        if wan_number is None:
+            return await self.post_json("cmd/devmgr", {"cmd": "speedtest", "mac": mac})
+
+        # Fall back to the logical name when the WAN section has no ifname.
+        iface = interface_name or ("wan" if wan_number == 1 else f"wan{wan_number}")
+        attempts: list[tuple[str, dict]] = [
+            (self._url("cmd/devmgr/speedtest"), {"interface_name": iface}),
+            (
+                self._url("cmd/devmgr"),
+                {"cmd": "speedtest", "mac": mac, "interface_name": iface},
+            ),
+            (self._url_v2("speedtest"), {"interface_name": iface}),
+        ]
+        for url, payload in attempts:
+            status, body = await self._post(url, payload)
+            if status == 200:
+                _LOGGER.debug("Speedtest for WAN%s accepted by %s", wan_number, url)
+                return body if isinstance(body, dict) else {"ok": True}
+            if status not in (400, 401, 403, 404, 405):
+                # A real failure rather than "this endpoint isn't the one".
+                break
+        _LOGGER.warning(
+            "No speedtest endpoint accepted a request for WAN%s (interface %s); "
+            "falling back to a whole-gateway speedtest",
+            wan_number,
+            iface,
+        )
+        return await self.post_json("cmd/devmgr", {"cmd": "speedtest", "mac": mac})
 
 
 def _log_raw_payload(gateway: dict[str, Any] | None, devices: list[dict]) -> None:
@@ -248,6 +329,21 @@ def _get_ip6_from(data: dict[str, Any]) -> str | None:
     return None
 
 
+def wan_group_to_number(group: Any) -> int | None:
+    """Map a controller WAN group name to a WAN number: "WAN" is WAN1,
+    "WAN2" is WAN2, and so on. Used for both last_wan_interfaces keys and
+    the per-WAN speedtest API's wan_networkgroup.
+    """
+    if not isinstance(group, str):
+        return None
+    s = group.strip().upper()
+    if s == "WAN":
+        return 1
+    if s.startswith("WAN") and s[3:].isdigit():
+        return int(s[3:])
+    return None
+
+
 def _normalise_interface(iface: Any) -> str | None:
     """Clean a controller-reported interface name.
 
@@ -288,6 +384,68 @@ def _extract_speedtest(
         # None when the controller does not say; never guessed.
         "source_interface": _normalise_interface(status.get("source_interface")),
     }
+
+
+def _speedtest_epoch(value: Any) -> int | None:
+    """Coerce a speedtest timestamp to epoch seconds.
+
+    The v2 API reports milliseconds while the gateway block reports
+    seconds; anything past the year 5138 in seconds is really milliseconds.
+    """
+    try:
+        ts = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    return ts // 1000 if ts > 100_000_000_000 else ts
+
+
+def parse_speedtest_history(
+    body: dict[str, Any] | None, wan: dict[int, dict[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    """Latest speedtest per WAN from the v2 API's records.
+
+    Each record names its WAN directly (wan_networkgroup), which removes
+    the guesswork of deciding which interface a global result belonged to.
+    Records are applied oldest first so the newest wins per WAN.
+    """
+    if not isinstance(body, dict):
+        return {}
+    entries = body.get("data")
+    if not isinstance(entries, list):
+        return {}
+
+    results: dict[int, dict[str, Any]] = {}
+    for entry in sorted(
+        (e for e in entries if isinstance(e, dict)),
+        key=lambda e: _speedtest_epoch(e.get("time")) or 0,
+    ):
+        wan_number = wan_group_to_number(
+            entry.get("wan_networkgroup") or entry.get("wan_group")
+        )
+        if wan_number is None:
+            wan_number = interface_to_wan_number(
+                entry.get("interface_name")
+                or entry.get("interface")
+                or entry.get("ifname"),
+                wan,
+            )
+        if wan_number is None:
+            continue
+        down = entry.get("download_mbps", entry.get("xput_down"))
+        up = entry.get("upload_mbps", entry.get("xput_up"))
+        if down is None and up is None:
+            continue
+        results[wan_number] = {
+            "down": down,
+            "up": up,
+            "ping": entry.get("latency_ms", entry.get("speedtest_ping")),
+            "lastrun": _speedtest_epoch(entry.get("time")),
+            "source": "speedtest_api",
+            "requested_wan": None,
+        }
+    return results
 
 
 def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
@@ -521,7 +679,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _update_devices() -> UniFiWanData:
         """Fetch and process data."""
         raw = await client.get_devices()
-        return _extract_wan_data(raw)
+        data = _extract_wan_data(raw)
+        # Best effort: controllers that offer it report a result per WAN,
+        # which beats inferring which WAN a global result belonged to.
+        history = await client.get_speedtest_history()
+        if history is not None:
+            data.per_wan_speedtest = parse_speedtest_history(history, data.wan)
+        return data
 
     device_coordinator = DataUpdateCoordinator(
         hass,
@@ -584,19 +748,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     @callback
     def _process_speedtest_result() -> None:
-        """Attribute a freshly completed speedtest to a WAN interface.
+        """Publish per-WAN speedtest results on every coordinator refresh.
 
-        Runs on every device coordinator refresh. A result is only ever
-        attributed on evidence: the interface the controller says the test
-        ran on, or failing that the WAN that is currently the active uplink.
-        The requested interface is deliberately not used as a fallback -
-        many firmware versions ignore it and always test the active uplink,
-        so trusting the request labels one WAN's throughput as another's.
+        When the controller offers a per-WAN speedtest API its records are
+        authoritative and are used as-is. Otherwise the gateway's single
+        global result is attributed to a WAN on evidence: the interface the
+        controller says the test ran on, or failing that the active uplink.
+        The requested interface is deliberately never used as a fallback -
+        firmware that ignores it always tests the active uplink, so trusting
+        the request labels one WAN's throughput as another's.
         """
         nonlocal last_attributed_run, per_wan_speedtest_supported
         data: UniFiWanData | None = device_coordinator.data
         if not data:
             return
+
+        if data.per_wan_speedtest:
+            changed = False
+            for wan_number, result in data.per_wan_speedtest.items():
+                current = speedtest_results.get(wan_number)
+                if current and current.get("lastrun") == result.get("lastrun"):
+                    continue
+                speedtest_results[wan_number] = dict(result)
+                changed = True
+            if changed:
+                _LOGGER.debug(
+                    "Updated per-WAN speedtest results from the controller: %s",
+                    sorted(data.per_wan_speedtest),
+                )
+                async_dispatcher_send(hass, result_signal)
+            return
+
         result = data.speedtest
         lastrun = result.get("lastrun")
         if not lastrun or lastrun == last_attributed_run:
@@ -687,8 +869,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.warning("Cannot run speedtest: No gateway found.")
                 return
 
-            last_run_before = gw_data.speedtest.get("lastrun")
-            await client.run_speedtest(mac_local, wan_number)
+            def _lastrun_of(gw: UniFiWanData | None) -> Any:
+                """The timestamp this run should be watching.
+
+                A targeted run on a controller with a per-WAN speedtest API
+                may only update that WAN's record, leaving the gateway's
+                global result untouched, so watch the WAN's own timestamp
+                there and the global one otherwise.
+                """
+                if gw is None:
+                    return None
+                if wan_number is not None and gw.per_wan_speedtest:
+                    entry = gw.per_wan_speedtest.get(wan_number)
+                    return entry.get("lastrun") if entry else None
+                return gw.speedtest.get("lastrun")
+
+            last_run_before = _lastrun_of(gw_data)
+            iface = None
+            if wan_number is not None:
+                iface = (gw_data.wan.get(wan_number) or {}).get("ifname")
+            await client.run_speedtest(mac_local, wan_number, iface)
 
             # Poll until the controller reports a new result or we time out.
             deadline = hass.loop.time() + SPEEDTEST_TIMEOUT_SECONDS
@@ -696,7 +896,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await asyncio.sleep(SPEEDTEST_POLL_SECONDS)
                 await device_coordinator.async_request_refresh()
                 gw_data = device_coordinator.data
-                last_run = gw_data.speedtest.get("lastrun") if gw_data else None
+                last_run = _lastrun_of(gw_data)
                 if last_run and last_run != last_run_before:
                     break
             else:
@@ -724,10 +924,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         only spend extra tests to measure the same WAN repeatedly.
         """
         nonlocal auto_wan_index
-        if per_wan_speedtest_supported is False:
+        data: UniFiWanData | None = device_coordinator.data
+        # A controller with a per-WAN speedtest API records each run against
+        # its own WAN, so cycling is always worthwhile there.
+        has_per_wan_api = bool(data and data.per_wan_speedtest)
+        if per_wan_speedtest_supported is False and not has_per_wan_api:
             await _run_speedtest_now()
             return
-        data: UniFiWanData | None = device_coordinator.data
         candidates = [
             n for n in wan_numbers if (data.wan.get(n) or {}).get("up")
         ] if data else []

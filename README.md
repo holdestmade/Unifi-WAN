@@ -13,6 +13,7 @@ Primary UniFi Network API endpoints used:
 - `GET /proxy/network/api/s/<site>/stat/device` — full site device stats (gateway, WAN sections, speedtest info)
 - `GET /proxy/network/api/s/<site>/stat/device/<mac>` — lightweight per-gateway stats for fast WAN rates
 - `POST /proxy/network/api/s/<site>/cmd/devmgr` — trigger a speedtest on the gateway
+- `GET /proxy/network/v2/api/site/<site>/speedtest` — per-WAN speedtest records, where the controller supports it (older firmware answers 404 and is asked only once)
 
 Get the API key from your UniFi Console UI:
 
@@ -69,16 +70,14 @@ Speedtest values are taken from the gateway’s `speedtest-status` block after a
 - **UniFi WAN\* Speedtest Ping** (**ms**)  
 - **UniFi WAN\* Speedtest Last Run** (timestamp)
 
-The controller only stores the *latest* speedtest result, overwriting it on every run regardless of interface, so the integration works out which WAN each completed run belongs to and keeps the last result per WAN. Values survive Home Assistant restarts and only change when a speedtest actually runs on that WAN.
+Where these values come from depends on what the controller offers, and each sensor's `attributed_by` attribute records which route was used:
 
-Attribution is made on evidence, never on which WAN was asked for:
+1. **`GET /proxy/network/v2/api/site/<site>/speedtest`** (`attributed_by: speedtest_api`) — newer controllers keep a speedtest record *per WAN*, each tagged with its own `wan_networkgroup`. When this is available every WAN shows its own genuine result, including WANs that are not the active uplink and tests started from the UniFi UI. No guesswork is involved.
+2. **The gateway's single global result**, attributed to one WAN — used only when the controller has no per-WAN API. The global result is overwritten by every run regardless of interface, so it is attributed on evidence: `speedtest-status.source_interface` (`attributed_by: source_interface`), else the WAN that is currently the active uplink (`attributed_by: active_wan`). The WAN a test was *requested* on is never used, because firmware that ignores the request always tests the active uplink and trusting it labels one line's throughput as another's.
 
-1. `speedtest-status.source_interface`, the controller's own record of the interface the test ran on.
-2. Failing that, the WAN that is currently the active uplink.
+On route 2 a WAN only accumulates results while it is the active uplink, and asking for a test on a non-active WAN updates the active WAN's sensors instead — the other WAN keeps its previous value rather than being given a figure that belongs to a different line. That case is logged as a warning, and the automatic speedtest stops cycling interfaces since every run would measure the same WAN.
 
-**Many gateways ignore the requested interface and always test the active uplink.** On those, asking for a speedtest on a non-active WAN updates the *active* WAN's sensors instead, and the other WAN keeps its previous result rather than being given a figure that belongs to a different line. When this is detected it is logged as a warning and the automatic speedtest stops cycling interfaces. Each sensor's `attributed_by` attribute records which of the two rules above was used.
-
-Practically, this means a WAN accumulates its own speedtest results while it is the active uplink — for a failover setup, that is whenever it is carrying traffic.
+Values survive Home Assistant restarts and only change when a speedtest actually runs on that WAN.
 
 **WAN identification**
 
@@ -170,7 +169,7 @@ All options are available via the integration’s **Options** UI and can be chan
 - **Auto speedtest interval (minutes)** (default **60**)  
   - How often to trigger an automatic speedtest when enabled.  
   - With more than one WAN interface, each run cycles to the next WAN that currently has link, so every WAN accumulates its own per-WAN speedtest results over time. With a single WAN the plain speedtest command is used.  
-  - The rotation stops automatically if the gateway is seen to ignore the requested interface, since every run would then measure the active uplink anyway.
+  - The rotation stops automatically if the gateway has no per-WAN speedtest API *and* is seen to ignore the requested interface, since every run would then measure the active uplink anyway.
 
 ---
 

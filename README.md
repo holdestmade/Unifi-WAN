@@ -201,7 +201,9 @@ Produces a JSON file containing what the controller sent and what the integratio
 - The per-WAN speedtest API's raw response, where the controller offers one
 - The integration's own conclusions: the resolved active WAN and how it was matched, the parsed per-WAN results, and the values the sensors are currently showing
 
-Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers and the speedtest server's location are redacted. Because addresses are hidden, whether two of them matched is reported in the `derived` section rather than left to be inferred. **Please attach this file when opening an issue.**
+Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers and the speedtest server's location are redacted — both by an explicit list of field names and by shape, so that any field whose name ends in `_id`, `_uuid`, `_token`, `_key`, `_authkey`, `_hash`, `_mac`, `_ip`, `_secret`, `_password` or `_fingerprint` is redacted even if a firmware update introduced it and nobody has seen it before.
+
+Because addresses are hidden, whether two of them matched is reported in the `derived` section rather than left to be inferred. **Please attach this file when opening an issue.**
 
 ---
 

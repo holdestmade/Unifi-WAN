@@ -7,15 +7,18 @@ that comparison, and this needs no logger configuration to produce.
 """
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Final
 
-from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN
 from . import UniFiWanData, UniFiWanRuntimeData, resolve_active_wan
+
+# Matches the marker Home Assistant's own diagnostics helper renders.
+REDACTED: Final = "**REDACTED**"
 
 # Applied recursively by key, to the controller payload as well as to the
 # config entry. Structural fields the WAN logic turns on - ifname,
@@ -28,38 +31,56 @@ TO_REDACT: set[str] = {
     # Credentials and where the console lives
     "api_key",
     "host",
+    "guest_token",
+    "syslog_key",
     "x_aes_gcm_keys",
     "x_authkey",
     "x_fingerprint",
+    "x_inform_authkey",
     "x_ssh_hostkey_fingerprint",
     "x_vwirekey",
     # Addressing
+    "address",
     "ip",
     "ip6",
     "ipv6",
     "ip6_address",
     "ip6_addresses",
     "ipv6_addresses",
+    "ipv6_link_local_address",
     "lan_ip",
+    "last_wan_ip",
     "wan_ip",
     "gateway",
     "gateway_v6",
     "dns",
     "nameservers",
     "nameservers_dynamic",
-    # Hardware and account identifiers
+    # Hardware and account identifiers. "gw" and "sw" are short but are the
+    # gateway's and switch's own identifiers in the controller payload.
     "mac",
     "ap_mac",
+    "gw",
     "gw_mac",
+    "sw",
     "sw_mac",
     "bssid",
+    "chassis_id",
     "serial",
     "serial_number",
+    "hardware_uuid",
+    "sha_256",
+    "dns_shield_server_list_hash",
     "_id",
+    "oid",
     "anon_id",
     "anonymous_id",
+    "connection_network_id",
+    "device_domain",
     "device_id",
+    "external_id",
     "hash_id",
+    "native_networkconf_id",
     "site_id",
     "hostname",
     # Speedtest server location, which locates the subscriber too
@@ -70,6 +91,54 @@ TO_REDACT: set[str] = {
     "latitude",
     "longitude",
 }
+
+# A key ending in any of these is redacted whether or not it is listed above.
+# The controller sends hundreds of fields and gains more with each firmware,
+# so an exact list is always one release behind - and a field only turns out
+# to be missing from it after someone has posted their diagnostics publicly.
+# No field the WAN logic reads ends in any of these: the closest is
+# "port_idx", which is not "_id", and "sw_version", which is not "sw".
+REDACT_SUFFIXES: Final[tuple[str, ...]] = (
+    "_id",
+    "_uuid",
+    "_token",
+    "_key",
+    "_authkey",
+    "_hash",
+    "_mac",
+    "_ip",
+    "_secret",
+    "_password",
+    "_fingerprint",
+)
+
+
+def _should_redact(key: Any) -> bool:
+    return isinstance(key, str) and (key in TO_REDACT or key.endswith(REDACT_SUFFIXES))
+
+
+def _redact(data: Any) -> Any:
+    """Recursively redact by key name.
+
+    Home Assistant's async_redact_data matches keys exactly, so this adds
+    the suffix rules above. Empty and null values are left alone, as they
+    reveal nothing and replacing them only obscures that a field was unset.
+    """
+    if isinstance(data, list):
+        return [_redact(item) for item in data]
+    if not isinstance(data, Mapping):
+        return data
+    redacted: dict[Any, Any] = {}
+    for key, value in data.items():
+        if value is None or (isinstance(value, str) and not value):
+            redacted[key] = value
+        elif _should_redact(key):
+            redacted[key] = REDACTED
+        elif isinstance(value, (Mapping, list)):
+            redacted[key] = _redact(value)
+        else:
+            redacted[key] = value
+    return redacted
 
 
 def _device_summary(devices: list[dict], gateway: dict[str, Any] | None) -> list[dict]:
@@ -114,8 +183,8 @@ async def async_get_config_entry_diagnostics(
             "gateway_firmware": runtime.dev_meta.get("sw_version"),
         },
         "entry": {
-            "data": async_redact_data(dict(entry.data), TO_REDACT),
-            "options": async_redact_data(dict(entry.options), TO_REDACT),
+            "data": _redact(dict(entry.data)),
+            "options": _redact(dict(entry.options)),
         },
     }
 
@@ -124,7 +193,9 @@ async def async_get_config_entry_diagnostics(
         return diagnostics
 
     active_wan, match_reason = resolve_active_wan(data)
-    diagnostics["derived"] = {
+    # Redacted like everything else: nothing here carries an address today,
+    # but a field added later should not leak by having been overlooked.
+    diagnostics["derived"] = _redact({
         # What the integration concluded, so a wrong conclusion can be told
         # apart from wrong data.
         "wan_numbers": runtime.wan_numbers,
@@ -140,16 +211,14 @@ async def async_get_config_entry_diagnostics(
         "targeted_speedtest_supported": runtime.client.targeted_speedtest_supported,
         "auto_speedtest_enabled": runtime.auto_enabled,
         "speedtest_running": runtime.get_speedtest_running(),
-    }
+    })
     diagnostics["controller"] = {
         # The gateway verbatim: WAN sections, uplink, speedtest-status,
         # port_table and everything else it reports.
-        "gateway_device": async_redact_data(data.gateway or {}, TO_REDACT),
+        "gateway_device": _redact(data.gateway or {}),
         # The per-WAN speedtest API's raw response, the source of the
         # per-WAN sensors.
-        "speedtest_history": async_redact_data(
-            data.speedtest_history_raw or {}, TO_REDACT
-        ),
+        "speedtest_history": _redact(data.speedtest_history_raw or {}),
         "other_devices": _device_summary(data.devices, data.gateway),
     }
     return diagnostics

@@ -51,7 +51,7 @@ It does not support:
 
 **Speedtest**
 
-Speedtest values are taken from the gateway’s `uplink` section after a speedtest completes.
+Speedtest values are taken from the gateway’s `speedtest-status` block after a speedtest completes, falling back to the equivalent fields on the `uplink` section for firmware that does not report it.
 
 - **UniFi Speedtest Download**  
   - Gateway speedtest download result in **Mbit/s**  
@@ -64,22 +64,32 @@ Speedtest values are taken from the gateway’s `uplink` section after a speedte
 
 **Per-WAN speedtest**
 
-The controller only stores the *latest* speedtest result, overwriting it on every run regardless of interface. The integration therefore attributes each completed run to a WAN interface — using the controller-reported speedtest interface where available, otherwise the interface the test was requested on, otherwise the active WAN — and keeps the last result per WAN. Values survive Home Assistant restarts and update only when a speedtest actually runs on that WAN.
-
 - **UniFi WAN\* Speedtest Download** (**Mbit/s**)  
 - **UniFi WAN\* Speedtest Upload** (**Mbit/s**)  
 - **UniFi WAN\* Speedtest Ping** (**ms**)  
 - **UniFi WAN\* Speedtest Last Run** (timestamp)
 
+The controller only stores the *latest* speedtest result, overwriting it on every run regardless of interface, so the integration works out which WAN each completed run belongs to and keeps the last result per WAN. Values survive Home Assistant restarts and only change when a speedtest actually runs on that WAN.
+
+Attribution is made on evidence, never on which WAN was asked for:
+
+1. `speedtest-status.source_interface`, the controller's own record of the interface the test ran on.
+2. Failing that, the WAN that is currently the active uplink.
+
+**Many gateways ignore the requested interface and always test the active uplink.** On those, asking for a speedtest on a non-active WAN updates the *active* WAN's sensors instead, and the other WAN keeps its previous result rather than being given a figure that belongs to a different line. When this is detected it is logged as a warning and the automatic speedtest stops cycling interfaces. Each sensor's `attributed_by` attribute records which of the two rules above was used.
+
+Practically, this means a WAN accumulates its own speedtest results while it is the active uplink — for a failover setup, that is whenever it is carrying traffic.
+
 **WAN identification**
 
 - **UniFi Active WAN ID**  
   - Logical ID of the active WAN (e.g. `WAN1`), or `Unknown`  
-  - Derived by matching the uplink IP against each WAN section, then the uplink port name against each WAN section's interface name, then falling back to the only WAN that is up  
-  - Attributes include the resolved WAN, the match reason and the per-WAN IPs/interface names for debugging
+  - Derived by matching the uplink IP against each WAN section, then the uplink interface name against each WAN section's, then falling back to the only WAN that is up  
+  - Attributes include the resolved WAN, the match reason and the per-WAN IPs, interface names and ports for debugging
 - **UniFi Active WAN Name**  
-  - Human-friendly description of the currently active WAN  
-  - Always derived from the same WAN section as **UniFi Active WAN ID**, so the two sensors can never point at different interfaces (in load-balanced dual-WAN setups the controller's uplink object can mix fields from both interfaces)
+  - Human-friendly description of the currently active WAN, e.g. `Virgin Fibre (Port 9)` or `WAN1 (Port 9)` when the controller has no description of its own  
+  - Always derived from the same WAN section as **UniFi Active WAN ID**, so the two sensors can never point at different interfaces  
+  - The WAN is qualified by its **chassis port** rather than its raw kernel interface name. UniFi numbers interfaces from zero and ports from one, so `eth8` is the port labelled **9** on the case — reporting the interface name directly reads like the neighbouring port. The port is only ever taken from the controller's own `physical_ports`/`port_table` data; where that is unavailable the interface name is shown instead, and it is never converted by arithmetic.
 
 ---
 
@@ -159,7 +169,8 @@ All options are available via the integration’s **Options** UI and can be chan
   - Enable/disable automatic speedtests entirely.
 - **Auto speedtest interval (minutes)** (default **60**)  
   - How often to trigger an automatic speedtest when enabled.  
-  - With more than one WAN interface, each run cycles to the next WAN that currently has link, so every WAN accumulates its own per-WAN speedtest results over time. With a single WAN the plain speedtest command is used.
+  - With more than one WAN interface, each run cycles to the next WAN that currently has link, so every WAN accumulates its own per-WAN speedtest results over time. With a single WAN the plain speedtest command is used.  
+  - The rotation stops automatically if the gateway is seen to ignore the requested interface, since every run would then measure the active uplink anyway.
 
 ---
 

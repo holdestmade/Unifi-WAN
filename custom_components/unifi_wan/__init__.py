@@ -68,6 +68,7 @@ class UniFiWanData:
     wan: dict[int, dict[str, Any]]
     wan_alive: dict[int, bool]
     wan_status: dict[int, str]
+    speedtest: dict[str, Any]
 
 
 @dataclass
@@ -165,9 +166,9 @@ class UnifiWanClient:
 
 
 def _log_raw_payload(gateway: dict[str, Any] | None, devices: list[dict]) -> None:
-    """Emit a debug log that surfaces the gateway fields relevant to the
-    IPv6 / speedtest_interface sensors so users can see what the controller
-    is actually returning. Enable with:
+    """Emit a debug log that surfaces the gateway fields behind the IPv6,
+    WAN identification and speedtest sensors so users can see what the
+    controller is actually returning. Enable with:
         logger:
           default: warning
           logs:
@@ -181,15 +182,29 @@ def _log_raw_payload(gateway: dict[str, Any] | None, devices: list[dict]) -> Non
     uplink = gateway.get("uplink") or {}
     wan_keys = [k for k in gateway.keys() if k == "wan" or (k.startswith("wan") and k[3:].isdigit())]
     wan_dump = {k: gateway.get(k) for k in wan_keys}
+    port_table = gateway.get("port_table")
+    ports = (
+        [
+            {k: p.get(k) for k in ("port_idx", "name", "ifname")}
+            for p in port_table
+            if isinstance(p, dict)
+        ]
+        if isinstance(port_table, list)
+        else None
+    )
     _LOGGER.debug(
         "UniFi raw gateway debug: uplink_keys=%s uplink.ip=%s uplink.ip6=%s "
-        "uplink.speedtest_interface=%s wan_blocks=%s last_wan_interfaces=%s",
+        "uplink.name=%s uplink.physical_ports=%s speedtest-status=%s "
+        "wan_blocks=%s last_wan_interfaces=%s port_table=%s",
         sorted(uplink.keys()),
         uplink.get("ip"),
         uplink.get("ip6"),
-        uplink.get("speedtest_interface"),
+        uplink.get("name"),
+        uplink.get("physical_ports"),
+        gateway.get("speedtest-status"),
         wan_dump,
         gateway.get("last_wan_interfaces"),
+        ports,
     )
 
 
@@ -231,6 +246,48 @@ def _get_ip6_from(data: dict[str, Any]) -> str | None:
                     if isinstance(addr, str) and _is_routable_ipv6(addr):
                         return addr
     return None
+
+
+def _normalise_interface(iface: Any) -> str | None:
+    """Clean a controller-reported interface name.
+
+    The speedtest block prefixes the interface with "if!" (e.g. "if!eth6")
+    and reports an empty string when it has nothing to say.
+    """
+    if not isinstance(iface, str):
+        return None
+    s = iface.strip()
+    if s.startswith("if!"):
+        s = s[3:]
+    return s or None
+
+
+def _extract_speedtest(
+    gateway: dict[str, Any] | None, uplink: dict[str, Any]
+) -> dict[str, Any]:
+    """Normalise the gateway's speedtest result into a single dict.
+
+    The authoritative source is the gateway's ``speedtest-status`` block,
+    which is the only place the controller records *which* interface the
+    test actually ran on (``source_interface``). The ``uplink`` fields carry
+    the same numbers under different names and are used as a fallback for
+    firmware that omits the block.
+    """
+    raw = gateway.get("speedtest-status") if gateway else None
+    status = raw if isinstance(raw, dict) else {}
+
+    def pick(primary: Any, fallback: Any) -> Any:
+        return primary if primary is not None else fallback
+
+    return {
+        "down": pick(status.get("xput_download"), uplink.get("xput_down")),
+        "up": pick(status.get("xput_upload"), uplink.get("xput_up")),
+        "ping": pick(status.get("latency"), uplink.get("speedtest_ping")),
+        "lastrun": pick(status.get("rundate"), uplink.get("speedtest_lastrun")),
+        "status": pick(status.get("status_summary"), uplink.get("speedtest_status")),
+        # None when the controller does not say; never guessed.
+        "source_interface": _normalise_interface(status.get("source_interface")),
+    }
 
 
 def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
@@ -328,6 +385,7 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
         wan=wan,
         wan_alive=wan_alive,
         wan_status=wan_status_map,
+        speedtest=_extract_speedtest(gateway, uplink),
     )
 
 
@@ -358,24 +416,27 @@ def resolve_active_wan(d: UniFiWanData) -> tuple[int | None, str]:
     return None, "no_match"
 
 
-def _interface_to_wan_number(iface: Any, wan: dict[int, dict[str, Any]]) -> int | None:
-    """Map a controller-reported speedtest interface to a WAN number.
+def interface_to_wan_number(iface: Any, wan: dict[int, dict[str, Any]]) -> int | None:
+    """Map a controller-reported interface to a WAN number.
 
-    Handles the "wan"/"wan2" naming used by the speedtest command as well
-    as physical port names (e.g. "eth8") that some firmware reports.
+    Matches against each WAN section's own interface fields, so PPPoE
+    uplinks ("ppp0") resolve as readily as plain ethernet ones. The
+    "wan"/"wan2" spellings used by the speedtest command are handled too,
+    but only after the section match: a literal interface name is stronger
+    evidence than a naming convention.
     """
-    if not isinstance(iface, str):
-        return None
-    s = iface.strip().lower()
+    s = _normalise_interface(iface)
     if not s:
         return None
+    s = s.lower()
+    for wan_number, wan_data in wan.items():
+        for key in ("ifname", "name"):
+            if s == str(wan_data.get(key) or "").strip().lower():
+                return wan_number
     if s == "wan":
         return 1
     if s.startswith("wan") and s[3:].isdigit():
         return int(s[3:])
-    for wan_number, wan_data in wan.items():
-        if s == str(wan_data.get("ifname") or "").strip().lower():
-            return wan_number
     return None
 
 
@@ -503,15 +564,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub_auto: CALLBACK_TYPE | None = None
 
     # Per-WAN speedtest results latched by _process_speedtest_result. The
-    # controller only stores the latest result (on the uplink object), so the
-    # integration attributes each completed run to a WAN and keeps it here.
+    # controller only stores the latest result, so the integration attributes
+    # each completed run to a WAN and keeps it here.
     speedtest_results: dict[int, dict[str, Any]] = {}
     # WAN number requested for the speedtest currently in flight, if any.
+    # Used only to report on the controller's behaviour - never to attribute
+    # a result. See _process_speedtest_result.
     pending_speedtest_wan: int | None = None
+    # None until a targeted run tells us whether this controller honours the
+    # requested interface; False disables the auto-speedtest WAN rotation.
+    per_wan_speedtest_supported: bool | None = None
     # Seed with the result already on the controller so a stale run isn't
     # re-attributed after every restart; per-WAN sensors restore their own
     # previous state instead.
-    last_attributed_run = device_coordinator.data.uplink.get("speedtest_lastrun")
+    last_attributed_run = device_coordinator.data.speedtest.get("lastrun")
 
     def _dispatch_running():
         async_dispatcher_send(hass, entry_signal)
@@ -520,39 +586,70 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def _process_speedtest_result() -> None:
         """Attribute a freshly completed speedtest to a WAN interface.
 
-        Runs on every device coordinator refresh. Attribution order: the
-        controller-reported speedtest interface, then the WAN the in-flight
-        request targeted, then the resolved active WAN.
+        Runs on every device coordinator refresh. A result is only ever
+        attributed on evidence: the interface the controller says the test
+        ran on, or failing that the WAN that is currently the active uplink.
+        The requested interface is deliberately not used as a fallback -
+        many firmware versions ignore it and always test the active uplink,
+        so trusting the request labels one WAN's throughput as another's.
         """
-        nonlocal last_attributed_run
+        nonlocal last_attributed_run, per_wan_speedtest_supported
         data: UniFiWanData | None = device_coordinator.data
-        if not data or not data.uplink:
+        if not data:
             return
-        lastrun = data.uplink.get("speedtest_lastrun")
+        result = data.speedtest
+        lastrun = result.get("lastrun")
         if not lastrun or lastrun == last_attributed_run:
             return
-        last_attributed_run = lastrun
-        down = data.uplink.get("xput_down")
-        up = data.uplink.get("xput_up")
-        if down is None and up is None:
+        if result.get("down") is None and result.get("up") is None:
             return
-        wan_number = _interface_to_wan_number(
-            data.uplink.get("speedtest_interface"), data.wan
-        )
-        if wan_number is None:
-            wan_number = pending_speedtest_wan
+        last_attributed_run = lastrun
+
+        requested = pending_speedtest_wan
+        wan_number = interface_to_wan_number(result.get("source_interface"), data.wan)
+        source = "source_interface"
         if wan_number is None:
             wan_number, _ = resolve_active_wan(data)
+            source = "active_wan"
         if wan_number is None:
-            _LOGGER.debug("Speedtest result could not be attributed to a WAN")
+            _LOGGER.debug(
+                "Speedtest result could not be attributed to a WAN "
+                "(source_interface=%r)",
+                result.get("source_interface"),
+            )
             return
+
+        if requested is not None and requested != wan_number:
+            if per_wan_speedtest_supported is not False:
+                per_wan_speedtest_supported = False
+                _LOGGER.warning(
+                    "Speedtest was requested on WAN%s but the controller ran it "
+                    "on WAN%s (matched by %s). This gateway appears to always "
+                    "test the active uplink, so per-WAN speedtest requests are "
+                    "not supported; the result has been recorded against WAN%s "
+                    "and the automatic speedtest will stop cycling interfaces.",
+                    requested,
+                    wan_number,
+                    source,
+                    wan_number,
+                )
+        elif requested is not None and source == "source_interface":
+            per_wan_speedtest_supported = True
+
         speedtest_results[wan_number] = {
-            "down": down,
-            "up": up,
-            "ping": data.uplink.get("speedtest_ping"),
+            "down": result.get("down"),
+            "up": result.get("up"),
+            "ping": result.get("ping"),
             "lastrun": lastrun,
+            "source": source,
+            "requested_wan": requested,
         }
-        _LOGGER.debug("Attributed speedtest result to WAN%s", wan_number)
+        _LOGGER.debug(
+            "Attributed speedtest result to WAN%s (matched by %s, requested %s)",
+            wan_number,
+            source,
+            requested,
+        )
         async_dispatcher_send(hass, result_signal)
 
     entry.async_on_unload(
@@ -590,7 +687,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.warning("Cannot run speedtest: No gateway found.")
                 return
 
-            last_run_before = gw_data.uplink.get("speedtest_lastrun")
+            last_run_before = gw_data.speedtest.get("lastrun")
             await client.run_speedtest(mac_local, wan_number)
 
             # Poll until the controller reports a new result or we time out.
@@ -599,7 +696,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await asyncio.sleep(SPEEDTEST_POLL_SECONDS)
                 await device_coordinator.async_request_refresh()
                 gw_data = device_coordinator.data
-                last_run = gw_data.uplink.get("speedtest_lastrun") if gw_data else None
+                last_run = gw_data.speedtest.get("lastrun") if gw_data else None
                 if last_run and last_run != last_run_before:
                     break
             else:
@@ -620,16 +717,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _auto_speedtest_callback(_now) -> None:
         """Run the scheduled speedtest, cycling through the WAN interfaces
         that currently have link so each WAN accumulates its own results.
-        With a single WAN the plain speedtest command is kept for maximum
-        firmware compatibility.
+
+        The rotation stops as soon as the controller is seen to ignore a
+        requested interface (see _process_speedtest_result): on those
+        gateways every run tests the active uplink anyway, so cycling would
+        only spend extra tests to measure the same WAN repeatedly.
         """
         nonlocal auto_wan_index
+        if per_wan_speedtest_supported is False:
+            await _run_speedtest_now()
+            return
         data: UniFiWanData | None = device_coordinator.data
         candidates = [
             n for n in wan_numbers if (data.wan.get(n) or {}).get("up")
         ] if data else []
-        if not candidates:
-            candidates = list(wan_numbers)
         if len(candidates) > 1:
             wan_number = candidates[auto_wan_index % len(candidates)]
             auto_wan_index += 1

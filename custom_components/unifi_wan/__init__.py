@@ -400,6 +400,20 @@ def _extract_speedtest(
     }
 
 
+def _first_present(entry: dict[str, Any], *keys: str) -> Any:
+    """First key holding a non-null value.
+
+    Not dict.get(a, dict.get(b)): the controller sends a key with an explicit
+    null while an older spelling alongside it still carries the figure, and
+    the default form would return that null instead of falling through.
+    """
+    for key in keys:
+        value = entry.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _speedtest_epoch(value: Any) -> int | None:
     """Coerce a speedtest timestamp to epoch seconds.
 
@@ -447,14 +461,24 @@ def parse_speedtest_history(
             )
         if wan_number is None:
             continue
-        down = entry.get("download_mbps", entry.get("xput_down"))
-        up = entry.get("upload_mbps", entry.get("xput_up"))
+        down = _first_present(entry, "download_mbps", "xput_down", "download")
+        up = _first_present(entry, "upload_mbps", "xput_up", "upload")
+        ping = _first_present(entry, "latency_ms", "speedtest_ping", "latency")
         if down is None and up is None:
             continue
+        if down is None or up is None:
+            # A spelling we don't know would show up here as a permanently
+            # missing figure, so say which record and what it contained.
+            _LOGGER.debug(
+                "Speedtest record for WAN%s has no %s value (record keys: %s)",
+                wan_number,
+                "download" if down is None else "upload",
+                sorted(entry),
+            )
         results[wan_number] = {
             "down": down,
             "up": up,
-            "ping": entry.get("latency_ms", entry.get("speedtest_ping")),
+            "ping": ping,
             "lastrun": _speedtest_epoch(entry.get("time")),
             "source": "speedtest_api",
             "requested_wan": None,
@@ -780,15 +804,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if data.per_wan_speedtest:
             changed = False
             for wan_number, result in data.per_wan_speedtest.items():
-                current = speedtest_results.get(wan_number)
-                if current and current.get("lastrun") == result.get("lastrun"):
+                # Compare the whole record, not just its timestamp: the
+                # controller fills a run's figures in over several seconds
+                # and keeps the same timestamp while doing so, so a poll
+                # that catches a half-written record must still accept the
+                # completed one rather than treating it as already seen.
+                if speedtest_results.get(wan_number) == result:
                     continue
                 speedtest_results[wan_number] = dict(result)
                 changed = True
             if changed:
                 _LOGGER.debug(
-                    "Updated per-WAN speedtest results from the controller: %s",
-                    sorted(data.per_wan_speedtest),
+                    "Per-WAN speedtest results updated: %s",
+                    {
+                        f"WAN{n}": {
+                            k: r.get(k) for k in ("down", "up", "ping", "lastrun")
+                        }
+                        for n, r in sorted(speedtest_results.items())
+                    },
                 )
                 async_dispatcher_send(hass, result_signal)
             return

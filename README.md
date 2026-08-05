@@ -191,6 +191,20 @@ All sensors, binary sensors, buttons and switches are attached to this device so
 
 ---
 
+## Diagnostics
+
+**Settings → Devices & Services → UniFi WAN → ⋮ → Download diagnostics**
+
+Produces a JSON file containing what the controller sent and what the integration made of it — the fastest way to get a bug report answered, and it needs no logger configuration:
+
+- The gateway's payload verbatim: the WAN sections, `uplink`, `speedtest-status`, `port_table` and `last_wan_interfaces`
+- The per-WAN speedtest API's raw response, where the controller offers one
+- The integration's own conclusions: the resolved active WAN and how it was matched, the parsed per-WAN results, and the values the sensors are currently showing
+
+Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers and the speedtest server's location are redacted. Because addresses are hidden, whether two of them matched is reported in the `derived` section rather than left to be inferred. **Please attach this file when opening an issue.**
+
+---
+
 ## Install
 
 ### HACS

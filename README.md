@@ -52,7 +52,9 @@ It does not support:
 
 **Speedtest**
 
-Speedtest values are taken from the gateway’s `speedtest-status` block after a speedtest completes, falling back to the equivalent fields on the `uplink` section for firmware that does not report it.
+These report the **active WAN's** speedtest result, so on a multi-WAN gateway they always match the per-WAN sensors of whichever WAN is currently the uplink. Testing a non-active WAN updates that WAN's own sensors and leaves these alone.
+
+Where the controller has no per-WAN records there is only one result to report, and these show it: the gateway’s `speedtest-status` block, falling back to the equivalent fields on the `uplink` section for firmware that does not report it.
 
 - **UniFi Speedtest Download**  
   - Gateway speedtest download result in **Mbit/s**  

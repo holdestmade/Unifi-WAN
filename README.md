@@ -205,6 +205,8 @@ Credentials, MAC addresses, public IP addresses, serial numbers, account identif
 
 Because addresses are hidden, whether two of them matched is reported in the `derived` section rather than left to be inferred. **Please attach this file when opening an issue.**
 
+**Please Check the file for any data you do not want public before posting it publicly**
+
 ---
 
 ## Install

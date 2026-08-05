@@ -115,6 +115,9 @@ class UnifiWanClient:
         # Set once the controller has told us it has no per-WAN speedtest
         # API, so we stop asking on every poll.
         self._speedtest_history_unsupported = False
+        # None until a targeted speedtest tells us whether this controller
+        # accepts one; False stops us retrying endpoints it has rejected.
+        self.targeted_speedtest_supported: bool | None = None
 
     def _url(self, path: str) -> str:
         return f"https://{self.host}/proxy/network/api/s/{self.site}/{path}"
@@ -214,10 +217,12 @@ class UnifiWanClient:
         A targeted run identifies the interface with "interface_name" (the
         WAN's own ifname, e.g. "eth7"). Firmware differs over which endpoint
         accepts it, so the known forms are tried in turn until one is not
-        rejected; a plain whole-gateway run keeps the single legacy call.
+        rejected. Once a controller has rejected all of them it is not asked
+        again, and every run uses the plain whole-gateway command.
         """
-        if wan_number is None:
-            return await self.post_json("cmd/devmgr", {"cmd": "speedtest", "mac": mac})
+        plain = {"cmd": "speedtest", "mac": mac}
+        if wan_number is None or self.targeted_speedtest_supported is False:
+            return await self.post_json("cmd/devmgr", plain)
 
         # Fall back to the logical name when the WAN section has no ifname.
         iface = interface_name or ("wan" if wan_number == 1 else f"wan{wan_number}")
@@ -229,21 +234,30 @@ class UnifiWanClient:
             ),
             (self._url_v2("speedtest"), {"interface_name": iface}),
         ]
+        tried: list[str] = []
         for url, payload in attempts:
             status, body = await self._post(url, payload)
+            # Record the path from /network/ onwards; the host and site add
+            # nothing and the site name is not worth putting in a log.
+            tried.append(f"{url.split('/network/', 1)[-1]}={status}")
             if status == 200:
+                self.targeted_speedtest_supported = True
                 _LOGGER.debug("Speedtest for WAN%s accepted by %s", wan_number, url)
                 return body if isinstance(body, dict) else {"ok": True}
             if status not in (400, 401, 403, 404, 405):
                 # A real failure rather than "this endpoint isn't the one".
                 break
+        self.targeted_speedtest_supported = False
         _LOGGER.warning(
-            "No speedtest endpoint accepted a request for WAN%s (interface %s); "
-            "falling back to a whole-gateway speedtest",
+            "This controller rejected every per-WAN speedtest request for WAN%s "
+            "(interface %r; tried %s). Falling back to a whole-gateway speedtest "
+            "and not asking again this session. Results are still recorded "
+            "against whichever WAN the controller reports having tested.",
             wan_number,
             iface,
+            ", ".join(tried),
         )
-        return await self.post_json("cmd/devmgr", {"cmd": "speedtest", "mac": mac})
+        return await self.post_json("cmd/devmgr", plain)
 
 
 def _log_raw_payload(gateway: dict[str, Any] | None, devices: list[dict]) -> None:
@@ -885,10 +899,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 return gw.speedtest.get("lastrun")
 
             last_run_before = _lastrun_of(gw_data)
+            # With a single WAN the whole-gateway speedtest already is that
+            # WAN's speedtest, so don't ask the controller to target it -
+            # firmware that rejects targeted requests would otherwise turn
+            # every press of the per-WAN button into three failed calls.
+            target = wan_number if len(wan_numbers) > 1 else None
             iface = None
-            if wan_number is not None:
-                iface = (gw_data.wan.get(wan_number) or {}).get("ifname")
-            await client.run_speedtest(mac_local, wan_number, iface)
+            if target is not None:
+                iface = (gw_data.wan.get(target) or {}).get("ifname")
+            await client.run_speedtest(mac_local, target, iface)
 
             # Poll until the controller reports a new result or we time out.
             deadline = hass.loop.time() + SPEEDTEST_TIMEOUT_SECONDS
@@ -926,9 +945,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         nonlocal auto_wan_index
         data: UniFiWanData | None = device_coordinator.data
         # A controller with a per-WAN speedtest API records each run against
-        # its own WAN, so cycling is always worthwhile there.
+        # its own WAN, so cycling is worthwhile there - but only if it will
+        # accept a targeted request in the first place.
         has_per_wan_api = bool(data and data.per_wan_speedtest)
-        if per_wan_speedtest_supported is False and not has_per_wan_api:
+        pointless = client.targeted_speedtest_supported is False or (
+            per_wan_speedtest_supported is False and not has_per_wan_api
+        )
+        if pointless:
             await _run_speedtest_now()
             return
         candidates = [

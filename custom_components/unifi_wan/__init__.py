@@ -72,6 +72,9 @@ class UniFiWanData:
     # Per-WAN speedtest results straight from the controller, keyed by WAN
     # number. Empty when the controller has no per-WAN speedtest API.
     per_wan_speedtest: dict[int, dict[str, Any]] = field(default_factory=dict)
+    # The per-WAN speedtest API's last response, kept verbatim so diagnostics
+    # can show what the controller actually returned. None when unavailable.
+    speedtest_history_raw: dict[str, Any] | None = None
 
 
 @dataclass
@@ -722,6 +725,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # which beats inferring which WAN a global result belonged to.
         history = await client.get_speedtest_history()
         if history is not None:
+            data.speedtest_history_raw = history
             data.per_wan_speedtest = parse_speedtest_history(history, data.wan)
         return data
 

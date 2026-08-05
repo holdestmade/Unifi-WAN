@@ -197,15 +197,38 @@ def _active_wan_attributes(d: UniFiWanData) -> dict[str, Any]:
     }
 
 
-def _speedtest_interface(d: UniFiWanData) -> str:
-    """Return the WAN the last speedtest ran on.
+def _active_speedtest(d: UniFiWanData) -> dict[str, Any]:
+    """The speedtest result belonging to the active WAN.
 
-    The controller records this in speedtest-status.source_interface, which
-    is reported as a raw interface name ("eth6"); it is resolved to the
-    matching WAN number so the state lines up with the other WAN sensors.
-    When the controller leaves it empty the active WAN is the best available
-    answer, since the test then ran against the active uplink.
+    The gateway's own speedtest block holds whichever WAN ran a test most
+    recently, which on a multi-WAN gateway is often not the active one -
+    testing WAN2 while WAN1 is the uplink would otherwise put WAN2's
+    throughput on the gateway-wide sensors. Where the controller keeps a
+    record per WAN the active WAN's own record is used instead; without
+    that there is only the one global result to report.
     """
+    if d.per_wan_speedtest:
+        wan_number, _ = resolve_active_wan(d)
+        if wan_number is not None:
+            result = d.per_wan_speedtest.get(wan_number)
+            if result:
+                return result
+    return d.speedtest
+
+
+def _speedtest_interface(d: UniFiWanData) -> str:
+    """Return the WAN whose result the gateway-wide Speedtest sensors show.
+
+    That is the active WAN wherever per-WAN records let those sensors follow
+    it. Otherwise it falls back to the controller's own record of the last
+    run, speedtest-status.source_interface - a raw interface name ("eth6"),
+    resolved to a WAN number so it lines up with the other WAN sensors - and
+    finally to the active WAN, since a test then ran against the uplink.
+    """
+    if d.per_wan_speedtest:
+        wan_number, _ = resolve_active_wan(d)
+        if wan_number is not None and d.per_wan_speedtest.get(wan_number):
+            return f"WAN{wan_number}"
     iface = d.speedtest.get("source_interface")
     if iface:
         wan_number = interface_to_wan_number(iface, d.wan)
@@ -280,7 +303,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: d.speedtest.get("down"),
+        value_fn=lambda d: _active_speedtest(d).get("down"),
     ),
     UniFiSensorDescription(
         key="speedtest_up",
@@ -289,7 +312,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
-        value_fn=lambda d: d.speedtest.get("up"),
+        value_fn=lambda d: _active_speedtest(d).get("up"),
     ),
     UniFiSensorDescription(
         key="speedtest_ping",
@@ -298,14 +321,14 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
-        value_fn=lambda d: d.speedtest.get("ping"),
+        value_fn=lambda d: _active_speedtest(d).get("ping"),
     ),
     UniFiSensorDescription(
         key="speedtest_last_run",
         name="UniFi Speedtest Last Run",
         icon="mdi:clock-outline",
         device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=lambda d: _ts_date(d.speedtest.get("lastrun")),
+        value_fn=lambda d: _ts_date(_active_speedtest(d).get("lastrun")),
     ),
     UniFiSensorDescription(
         key="speedtest_interface",
@@ -313,12 +336,16 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:wan",
         value_fn=_speedtest_interface,
         attributes_fn=lambda d: {
+            # What the gateway-wide Speedtest sensors are showing.
+            "xput_down": _active_speedtest(d).get("down"),
+            "xput_up": _active_speedtest(d).get("up"),
+            "speedtest_lastrun": _active_speedtest(d).get("lastrun"),
+            "per_wan_results": bool(d.per_wan_speedtest),
+            # The gateway's own last-run block, whichever WAN that was on.
             "raw_speedtest_interface": d.speedtest.get("source_interface"),
             "derived_from_active_wan": not bool(d.speedtest.get("source_interface")),
-            "speedtest_lastrun": d.speedtest.get("lastrun"),
+            "gateway_last_speedtest_lastrun": d.speedtest.get("lastrun"),
             "speedtest_status": d.speedtest.get("status"),
-            "xput_down": d.speedtest.get("down"),
-            "xput_up": d.speedtest.get("up"),
         },
     ),
     UniFiSensorDescription(

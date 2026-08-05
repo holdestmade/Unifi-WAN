@@ -197,44 +197,70 @@ def _active_wan_attributes(d: UniFiWanData) -> dict[str, Any]:
     }
 
 
-def _active_speedtest(d: UniFiWanData) -> dict[str, Any]:
-    """The speedtest result belonging to the active WAN.
+def _gateway_result_is_wan(d: UniFiWanData, wan_number: int | None) -> bool:
+    """Whether the gateway's last-run block holds that WAN's result.
 
-    The gateway's own speedtest block holds whichever WAN ran a test most
-    recently, which on a multi-WAN gateway is often not the active one -
-    testing WAN2 while WAN1 is the uplink would otherwise put WAN2's
-    throughput on the gateway-wide sensors. Where the controller keeps a
-    record per WAN the active WAN's own record is used instead; without
-    that there is only the one global result to report.
+    The block is overwritten by whichever WAN ran last, so it only counts as
+    a given WAN's when the controller names that interface - or when the
+    gateway has a single WAN and there is nothing else it could be.
     """
+    if wan_number is None:
+        return False
+    iface = d.speedtest.get("source_interface")
+    if iface:
+        return interface_to_wan_number(iface, d.wan) == wan_number
+    return len(d.wan) <= 1
+
+
+def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
+    """The result the gateway-wide Speedtest sensors show, and its WAN.
+
+    Two sources can hold the active WAN's result and either may be the
+    fresher one: the controller's per-WAN record, and the gateway's own
+    last-run block. The newer wins, but the gateway block is only eligible
+    when it demonstrably belongs to the active WAN - otherwise testing a
+    non-active WAN would put its throughput back on these sensors.
+    """
+    active, _ = resolve_active_wan(d)
+    candidates: list[dict[str, Any]] = []
+    if active is not None and d.per_wan_speedtest:
+        record = d.per_wan_speedtest.get(active)
+        if record:
+            candidates.append(record)
+    if _gateway_result_is_wan(d, active):
+        candidates.append(d.speedtest)
+    if candidates:
+        return max(candidates, key=lambda r: r.get("lastrun") or 0), active
+
     if d.per_wan_speedtest:
-        wan_number, _ = resolve_active_wan(d)
-        if wan_number is not None:
-            result = d.per_wan_speedtest.get(wan_number)
-            if result:
-                return result
-    return d.speedtest
+        # Per-WAN records exist but none belong to the active WAN, and the
+        # gateway block belongs to a different one. Reporting nothing beats
+        # reporting another line's throughput.
+        return {}, None
+
+    # No per-WAN records at all: the gateway's single result is everything
+    # this controller offers, so report it and say which WAN it came from.
+    iface = d.speedtest.get("source_interface")
+    return d.speedtest, (interface_to_wan_number(iface, d.wan) if iface else active)
+
+
+def _active_speedtest(d: UniFiWanData) -> dict[str, Any]:
+    """The speedtest result the gateway-wide sensors show."""
+    return _displayed_speedtest(d)[0]
 
 
 def _speedtest_interface(d: UniFiWanData) -> str:
-    """Return the WAN whose result the gateway-wide Speedtest sensors show.
-
-    That is the active WAN wherever per-WAN records let those sensors follow
-    it. Otherwise it falls back to the controller's own record of the last
-    run, speedtest-status.source_interface - a raw interface name ("eth6"),
-    resolved to a WAN number so it lines up with the other WAN sensors - and
-    finally to the active WAN, since a test then ran against the uplink.
+    """Return the WAN whose result the gateway-wide Speedtest sensors show,
+    so the interface named always matches the figures displayed.
     """
-    if d.per_wan_speedtest:
-        wan_number, _ = resolve_active_wan(d)
-        if wan_number is not None and d.per_wan_speedtest.get(wan_number):
-            return f"WAN{wan_number}"
+    result, wan_number = _displayed_speedtest(d)
+    if wan_number is not None:
+        return f"WAN{wan_number}"
     iface = d.speedtest.get("source_interface")
-    if iface:
-        wan_number = interface_to_wan_number(iface, d.wan)
-        return f"WAN{wan_number}" if wan_number is not None else iface
-    active = _wan_id(d)
-    return active if active != "Unknown" else "unknown"
+    if result and iface:
+        # An interface the controller named but we cannot map to a WAN.
+        return iface
+    return "unknown"
 
 
 SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (

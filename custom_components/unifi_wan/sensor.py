@@ -263,6 +263,40 @@ def _speedtest_interface(d: UniFiWanData) -> str:
     return "unknown"
 
 
+# How each of the ISP/geolocation fields a speedtest result carries is
+# presented, as (result field, label, icon). One entry per
+# SPEEDTEST_ISP_FIELDS key; the same set is built gateway-wide below and,
+# on a multi-WAN gateway, once more for each WAN.
+SPEEDTEST_ISP_SENSORS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("isp_name", "ISP", "mdi:web"),
+    ("isp_organization", "ISP Organization", "mdi:domain"),
+    ("asn", "ASN", "mdi:identifier"),
+    ("city", "City", "mdi:city"),
+    ("country_name", "Country", "mdi:earth"),
+    ("ip", "IP", "mdi:ip-outline"),
+)
+
+
+def _isp_value_fn(field: str) -> Callable[[UniFiWanData], Any]:
+    """Read one ISP field from the result the gateway-wide sensors show, so
+    it always describes the same run as the throughput beside it.
+    """
+    return lambda d: _active_speedtest(d).get(field)
+
+
+# Gateway-wide ISP sensors: the active WAN's, matching the Speedtest
+# Download/Upload/Ping sensors they sit alongside.
+_ISP_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
+    UniFiSensorDescription(
+        key=f"speedtest_{field}",
+        name=f"UniFi Speedtest {label}",
+        icon=icon,
+        value_fn=_isp_value_fn(field),
+    )
+    for field, label, icon in SPEEDTEST_ISP_SENSORS
+)
+
+
 SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     UniFiSensorDescription(
         key="wan_ipv4",
@@ -374,6 +408,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
             "speedtest_status": d.speedtest.get("status"),
         },
     ),
+    *_ISP_SENSORS,
     UniFiSensorDescription(
         key="active_wan_id",
         name="UniFi Active WAN ID",
@@ -443,6 +478,18 @@ def _wan_speedtest_descriptions(
             ),
             "lastrun",
             _ts_date,
+        ),
+        *(
+            (
+                SensorEntityDescription(
+                    key=f"wan{wan_number}_speedtest_{field}",
+                    name=f"UniFi WAN{wan_number} Speedtest {label}",
+                    icon=icon,
+                ),
+                field,
+                None,
+            )
+            for field, label, icon in SPEEDTEST_ISP_SENSORS
         ),
     )
 

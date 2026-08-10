@@ -7,6 +7,7 @@ Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud
 
 - Live WAN status, IP information and throughput sensors
 - Speedtest automation with manual triggers and binary sensors for insight into the test lifecycle
+- ISP identification per WAN — provider, organisation, ASN, location and public IP, taken from the lookup the controller performs for each speedtest
 
 Primary UniFi Network API endpoints used:
 
@@ -64,6 +65,20 @@ Where the controller has no per-WAN records there is only one result to report, 
   - Gateway speedtest latency in **ms**  
 - **UniFi Speedtest Last Run**  
   - Timestamp of the last speedtest  
+- **UniFi Speedtest ISP**  
+  - Name of the internet provider the test went out through, e.g. `Virgin Media`  
+- **UniFi Speedtest ISP Organization**  
+  - The provider's registered organisation, where it differs from the trading name  
+- **UniFi Speedtest ASN**  
+  - Autonomous system number the public address belongs to  
+- **UniFi Speedtest City**  
+  - City the public address geolocates to  
+- **UniFi Speedtest Country**  
+  - Country the public address geolocates to  
+- **UniFi Speedtest IP**  
+  - Public address the test went out from  
+
+The last six come from the ISP lookup the controller performs for each speedtest. They describe **the line the test ran over**, not the speedtest server, and are only ever read from the speedtest record itself — the uplink section's own address is not evidence of what a test used. Firmware that records no lookup leaves them `unknown`; run a speedtest and check the [diagnostics](#diagnostics) if yours does.
 
 **Per-WAN speedtest**
 
@@ -71,6 +86,12 @@ Where the controller has no per-WAN records there is only one result to report, 
 - **UniFi WAN\* Speedtest Upload** (**Mbit/s**)  
 - **UniFi WAN\* Speedtest Ping** (**ms**)  
 - **UniFi WAN\* Speedtest Last Run** (timestamp)
+- **UniFi WAN\* Speedtest ISP**
+- **UniFi WAN\* Speedtest ISP Organization**
+- **UniFi WAN\* Speedtest ASN**
+- **UniFi WAN\* Speedtest City**
+- **UniFi WAN\* Speedtest Country**
+- **UniFi WAN\* Speedtest IP**
 
 These are only created when the gateway has **more than one WAN**. With a single WAN they would just restate the gateway-wide **UniFi Speedtest** sensors above, since the one WAN is always the one tested.
 
@@ -80,6 +101,8 @@ Where these values come from depends on what the controller offers, and each sen
 2. **The gateway's single global result**, attributed to one WAN — used only when the controller has no per-WAN API. The global result is overwritten by every run regardless of interface, so it is attributed on evidence: `speedtest-status.source_interface` (`attributed_by: source_interface`), else the WAN that is currently the active uplink (`attributed_by: active_wan`). The WAN a test was *requested* on is never used, because firmware that ignores the request always tests the active uplink and trusting it labels one line's throughput as another's.
 
 On route 2 a WAN only accumulates results while it is the active uplink, and asking for a test on a non-active WAN updates the active WAN's sensors instead — the other WAN keeps its previous value rather than being given a figure that belongs to a different line. That case is logged as a warning, and the automatic speedtest stops cycling interfaces since every run would measure the same WAN.
+
+The ISP details are attributed to the same WAN as the throughput they arrived with, so a WAN can never be labelled with another line's operator. On route 1 each record carries its own lookup and every WAN reports its own ISP; on route 2 only the WAN the global result was attributed to is updated, and a WAN whose provider was never recorded stays `unknown` rather than borrowing the other's.
 
 Values survive Home Assistant restarts and only change when a speedtest actually runs on that WAN.
 
@@ -201,7 +224,7 @@ Produces a JSON file containing what the controller sent and what the integratio
 - The per-WAN speedtest API's raw response, where the controller offers one
 - The integration's own conclusions: the resolved active WAN and how it was matched, the parsed per-WAN results, and the values the sensors are currently showing
 
-Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers and the speedtest server's location are redacted — both by an explicit list of field names and by shape, so that any field whose name ends in `_id`, `_uuid`, `_token`, `_key`, `_authkey`, `_hash`, `_mac`, `_ip`, `_secret`, `_password` or `_fingerprint` is redacted even if a firmware update introduced it and nobody has seen it before.
+Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers, the speedtest server's location and the ISP lookup behind the **Speedtest ISP/ASN/City** sensors are redacted — both by an explicit list of field names and by shape, so that any field whose name ends in `_id`, `_uuid`, `_token`, `_key`, `_authkey`, `_hash`, `_mac`, `_ip`, `_secret`, `_password` or `_fingerprint` is redacted even if a firmware update introduced it and nobody has seen it before. Redaction replaces values, not keys, and leaves nulls alone, so a diagnostics file still shows *whether* the controller populated each of those fields.
 
 Because addresses are hidden, whether two of them matched is reported in the `derived` section rather than left to be inferred. **Please attach this file when opening an issue.**
 

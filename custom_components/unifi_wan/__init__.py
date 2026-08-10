@@ -45,6 +45,7 @@ from .const import (
     MAX_WAN_INTERFACES,
     WAN_GEO_INFO_BLOCKS,
     WAN_ISP_FIELDS,
+    SPEEDTEST_SERVER_FIELDS,
     SERVICE_RUN_SPEEDTEST,
     ATTR_WAN,
     SPEEDTEST_TIMEOUT_SECONDS,
@@ -430,6 +431,53 @@ def _extract_geo_info(gateway: dict[str, Any] | None) -> dict[int, dict[str, Any
     return merged
 
 
+def _extract_server_fields(status: dict[str, Any]) -> dict[str, Any]:
+    """Which speedtest server the gateway's last run tested against.
+
+    Read from the "server" sub-object alone, never from the block around
+    it: the two use some of the same key names for different things, and
+    the outer ones belong to the subscriber's line.
+
+    Every field is optional - firmware that names no server reports none of
+    them - so an absent one stays unset rather than being filled in from
+    elsewhere. Blank strings are treated as absent for the same reason they
+    are in the ISP lookup: the controller uses them where it has nothing to
+    report.
+    """
+    raw = status.get("server")
+    server = raw if isinstance(raw, dict) else {}
+    fields: dict[str, Any] = {}
+    for name, keys in SPEEDTEST_SERVER_FIELDS.items():
+        value = _first_present(server, *keys)
+        if isinstance(value, str):
+            value = value.strip() or None
+        fields[name] = value
+    return fields
+
+
+def attributed_server(
+    gateway_server: dict[str, Any],
+    belongs_to_wan: bool,
+    previous: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The speedtest server to record against one WAN.
+
+    Carried forward from what that WAN already had unless the gateway's
+    block both belongs to it and names a server, so a block caught
+    mid-write does not blank the sensors, and a run on one WAN never
+    rewrites another's.
+
+    Always returns every field, including when there is nothing to record.
+    The caller compares the record it builds against the stored one to
+    decide whether anything changed, and one missing these keys would
+    differ on every refresh.
+    """
+    if belongs_to_wan and any(v is not None for v in gateway_server.values()):
+        return dict(gateway_server)
+    prev = previous or {}
+    return {name: prev.get(name) for name in SPEEDTEST_SERVER_FIELDS}
+
+
 def _extract_speedtest(
     gateway: dict[str, Any] | None, uplink: dict[str, Any]
 ) -> dict[str, Any]:
@@ -455,6 +503,9 @@ def _extract_speedtest(
         "status": pick(status.get("status_summary"), uplink.get("speedtest_status")),
         # None when the controller does not say; never guessed.
         "source_interface": _normalise_interface(status.get("source_interface")),
+        # The far end of that run. Only the block's own "server" sub-object
+        # is consulted, never the uplink section, which describes the line.
+        **_extract_server_fields(status),
     }
 
 
@@ -681,6 +732,27 @@ def interface_to_wan_number(iface: Any, wan: dict[int, dict[str, Any]]) -> int |
     return None
 
 
+def gateway_speedtest_wan(d: UniFiWanData) -> int | None:
+    """The WAN the gateway's speedtest-status block belongs to, or None.
+
+    The gateway keeps one such block and overwrites it on every run
+    regardless of interface, so it is only claimed for a WAN on evidence:
+    the interface the controller says the test ran on, or a gateway with a
+    single WAN, where there is nothing else it could be.
+
+    The active uplink is deliberately not a fallback here. It is good
+    enough for throughput, which is replaced by that WAN's next run, but
+    the speedtest server latches - a wrong guess would sit on a WAN
+    indefinitely with no later run to correct it.
+    """
+    iface = d.speedtest.get("source_interface")
+    if iface:
+        return interface_to_wan_number(iface, d.wan)
+    if len(d.wan) == 1:
+        return next(iter(d.wan))
+    return None
+
+
 async def _async_migrate_registry(
     hass: HomeAssistant, entry: ConfigEntry, host: str, site: str
 ) -> None:
@@ -847,9 +919,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not data:
             return
 
+        # The speedtest server is recorded once, in the gateway's own block,
+        # so it is folded into whichever WAN that block can be shown to
+        # belong to. On the per-WAN route below the records themselves name
+        # no server at all, and this is the only way those sensors are ever
+        # populated.
+        server_wan = gateway_speedtest_wan(data)
+        server = {
+            name: data.speedtest.get(name) for name in SPEEDTEST_SERVER_FIELDS
+        }
+
+        def _server_for(wan_number: int) -> dict[str, Any]:
+            return attributed_server(
+                server,
+                wan_number == server_wan,
+                speedtest_results.get(wan_number),
+            )
+
         if data.per_wan_speedtest:
             changed = False
             for wan_number, result in data.per_wan_speedtest.items():
+                # The records name no server, so it is folded in here.
+                # Unconditionally, including when there is nothing to fold:
+                # the stored record is compared against below, and one
+                # missing these keys would differ on every refresh.
+                result = {**result, **_server_for(wan_number)}
                 # Compare the whole record, not just its timestamp: the
                 # controller fills a run's figures in over several seconds
                 # and keeps the same timestamp while doing so, so a poll
@@ -918,6 +1012,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "lastrun": lastrun,
             "source": source,
             "requested_wan": requested,
+            # Recorded against the WAN the block itself names, which is
+            # stricter than the throughput above: that may fall back to the
+            # active uplink, but the server latches with no later run to
+            # correct a wrong guess.
+            **_server_for(wan_number),
         }
         _LOGGER.debug(
             "Attributed speedtest result to WAN%s (matched by %s, requested %s)",

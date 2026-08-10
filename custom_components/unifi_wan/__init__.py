@@ -43,7 +43,8 @@ from .const import (
     SIGNAL_SPEEDTEST_RESULT,
     GATEWAY_DEVICES,
     MAX_WAN_INTERFACES,
-    SPEEDTEST_ISP_FIELDS,
+    WAN_GEO_INFO_BLOCKS,
+    WAN_ISP_FIELDS,
     SERVICE_RUN_SPEEDTEST,
     ATTR_WAN,
     SPEEDTEST_TIMEOUT_SECONDS,
@@ -73,6 +74,9 @@ class UniFiWanData:
     # Per-WAN speedtest results straight from the controller, keyed by WAN
     # number. Empty when the controller has no per-WAN speedtest API.
     per_wan_speedtest: dict[int, dict[str, Any]] = field(default_factory=dict)
+    # Per-WAN ISP and geolocation details from the gateway's own lookup,
+    # keyed by WAN number. Empty when the gateway reports no such block.
+    geo_info: dict[int, dict[str, Any]] = field(default_factory=dict)
     # The per-WAN speedtest API's last response, kept verbatim so diagnostics
     # can show what the controller actually returned. None when unavailable.
     speedtest_history_raw: dict[str, Any] | None = None
@@ -390,22 +394,40 @@ def _first_present(entry: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _extract_isp_fields(record: dict[str, Any]) -> dict[str, Any]:
-    """The ISP and geolocation details carried by one speedtest record.
+def _extract_geo_info(gateway: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """Per-WAN ISP and geolocation details, keyed by WAN number.
 
-    Every field is optional: a record from firmware that performs no ISP
-    lookup simply has none of them, and the corresponding sensors stay
-    unknown rather than being filled in from somewhere else. Blank strings
-    are treated as absent - the controller uses them where it has nothing
-    to report, and they would otherwise show as an empty sensor state.
+    The gateway reports these in its own blocks (see WAN_GEO_INFO_BLOCKS),
+    each keyed by WAN network group exactly as last_wan_interfaces is, so
+    every WAN gets the operator of its own line rather than sharing
+    whichever one was looked up last. The blocks overlap and disagree about
+    how much they carry, so they are merged in order and an earlier block's
+    value is never overwritten by a later one.
+
+    Every field is optional: a gateway that performs no lookup reports none
+    of them and the corresponding sensors stay unknown rather than being
+    filled in from somewhere else. Blank strings are treated as absent -
+    the controller uses them where it has nothing to report, and they would
+    otherwise show as an empty sensor state.
     """
-    fields: dict[str, Any] = {}
-    for name, keys in SPEEDTEST_ISP_FIELDS.items():
-        value = _first_present(record, *keys)
-        if isinstance(value, str):
-            value = value.strip() or None
-        fields[name] = value
-    return fields
+    merged: dict[int, dict[str, Any]] = {}
+    for block_key in WAN_GEO_INFO_BLOCKS:
+        block = (gateway or {}).get(block_key)
+        if not isinstance(block, dict):
+            continue
+        for group, info in block.items():
+            wan_number = wan_group_to_number(group)
+            if wan_number is None or not isinstance(info, dict):
+                continue
+            target = merged.setdefault(wan_number, dict.fromkeys(WAN_ISP_FIELDS))
+            for name, keys in WAN_ISP_FIELDS.items():
+                if target.get(name) is not None:
+                    continue
+                value = _first_present(info, *keys)
+                if isinstance(value, str):
+                    value = value.strip() or None
+                target[name] = value
+    return merged
 
 
 def _extract_speedtest(
@@ -433,9 +455,6 @@ def _extract_speedtest(
         "status": pick(status.get("status_summary"), uplink.get("speedtest_status")),
         # None when the controller does not say; never guessed.
         "source_interface": _normalise_interface(status.get("source_interface")),
-        # Only the speedtest block is consulted for these, never the uplink
-        # section - see SPEEDTEST_ISP_FIELDS.
-        **_extract_isp_fields(status),
     }
 
 
@@ -507,10 +526,6 @@ def parse_speedtest_history(
             "lastrun": _speedtest_epoch(entry.get("time")),
             "source": "speedtest_api",
             "requested_wan": None,
-            # Each record carries its own ISP lookup, so on this route every
-            # WAN reports the operator of its own line rather than sharing
-            # whichever one the gateway tested last.
-            **_extract_isp_fields(entry),
         }
     return results
 
@@ -611,6 +626,7 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
         wan_alive=wan_alive,
         wan_status=wan_status_map,
         speedtest=_extract_speedtest(gateway, uplink),
+        geo_info=_extract_geo_info(gateway),
     )
 
 
@@ -902,9 +918,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "lastrun": lastrun,
             "source": source,
             "requested_wan": requested,
-            # Attributed to the same WAN as the figures they arrived with,
-            # so a WAN can never be labelled with another line's ISP.
-            **{name: result.get(name) for name in SPEEDTEST_ISP_FIELDS},
         }
         _LOGGER.debug(
             "Attributed speedtest result to WAN%s (matched by %s, requested %s)",

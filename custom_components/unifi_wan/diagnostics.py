@@ -90,6 +90,19 @@ TO_REDACT: set[str] = {
     "lon",
     "latitude",
     "longitude",
+    # The ISP lookup a speedtest record carries. Together with the location
+    # above, the operator and its AS number narrow a subscriber down much
+    # as an address does. Redaction replaces values, not keys, and leaves
+    # nulls alone, so whether the controller populated each field - the
+    # thing worth debugging - is still visible. "country_name" is left
+    # intact: a country on its own identifies nobody.
+    "asn",
+    "isp_asn",
+    "isp",
+    "isp_name",
+    "isp_org",
+    "isp_organization",
+    "organization",
 }
 
 # A key ending in any of these is redacted whether or not it is listed above.

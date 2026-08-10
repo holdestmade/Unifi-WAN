@@ -46,3 +46,24 @@ SPEEDTEST_POLL_SECONDS: Final = 15
 
 GATEWAY_DEVICES: Final = ["udm", "ugw", "uxg", "uxg-pro", "ucg-ultra", "ucg"]
 MAX_WAN_INTERFACES: Final = 4
+
+# ISP and geolocation details the controller records alongside a speedtest
+# result, as {canonical name: record spellings to try, best first}.
+#
+# These describe the line the test ran over - the public address it went out
+# from and the operator that address belongs to - which is what identifies a
+# WAN's ISP. They are only ever read from a speedtest record itself: the
+# uplink section's own address is not evidence of what a test used, and the
+# gateway block's "server" sub-object describes the speedtest server rather
+# than the subscriber's line.
+#
+# Firmware differs over the spellings and older records carry none of them,
+# so every field is optional and an absent one stays unset.
+SPEEDTEST_ISP_FIELDS: Final[dict[str, tuple[str, ...]]] = {
+    "isp_name": ("isp_name", "isp", "client_isp"),
+    "isp_organization": ("isp_organization", "isp_org", "organization", "org"),
+    "asn": ("asn", "isp_asn", "as_number"),
+    "city": ("city", "client_city"),
+    "country_name": ("country_name", "country", "client_country"),
+    "ip": ("ip", "public_ip", "external_ip", "client_ip", "source_ip"),
+}

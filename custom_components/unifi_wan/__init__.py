@@ -43,6 +43,7 @@ from .const import (
     SIGNAL_SPEEDTEST_RESULT,
     GATEWAY_DEVICES,
     MAX_WAN_INTERFACES,
+    SPEEDTEST_ISP_FIELDS,
     SERVICE_RUN_SPEEDTEST,
     ATTR_WAN,
     SPEEDTEST_TIMEOUT_SECONDS,
@@ -375,6 +376,38 @@ def _normalise_interface(iface: Any) -> str | None:
     return s or None
 
 
+def _first_present(entry: dict[str, Any], *keys: str) -> Any:
+    """First key holding a non-null value.
+
+    Not dict.get(a, dict.get(b)): the controller sends a key with an explicit
+    null while an older spelling alongside it still carries the figure, and
+    the default form would return that null instead of falling through.
+    """
+    for key in keys:
+        value = entry.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _extract_isp_fields(record: dict[str, Any]) -> dict[str, Any]:
+    """The ISP and geolocation details carried by one speedtest record.
+
+    Every field is optional: a record from firmware that performs no ISP
+    lookup simply has none of them, and the corresponding sensors stay
+    unknown rather than being filled in from somewhere else. Blank strings
+    are treated as absent - the controller uses them where it has nothing
+    to report, and they would otherwise show as an empty sensor state.
+    """
+    fields: dict[str, Any] = {}
+    for name, keys in SPEEDTEST_ISP_FIELDS.items():
+        value = _first_present(record, *keys)
+        if isinstance(value, str):
+            value = value.strip() or None
+        fields[name] = value
+    return fields
+
+
 def _extract_speedtest(
     gateway: dict[str, Any] | None, uplink: dict[str, Any]
 ) -> dict[str, Any]:
@@ -400,21 +433,10 @@ def _extract_speedtest(
         "status": pick(status.get("status_summary"), uplink.get("speedtest_status")),
         # None when the controller does not say; never guessed.
         "source_interface": _normalise_interface(status.get("source_interface")),
+        # Only the speedtest block is consulted for these, never the uplink
+        # section - see SPEEDTEST_ISP_FIELDS.
+        **_extract_isp_fields(status),
     }
-
-
-def _first_present(entry: dict[str, Any], *keys: str) -> Any:
-    """First key holding a non-null value.
-
-    Not dict.get(a, dict.get(b)): the controller sends a key with an explicit
-    null while an older spelling alongside it still carries the figure, and
-    the default form would return that null instead of falling through.
-    """
-    for key in keys:
-        value = entry.get(key)
-        if value is not None:
-            return value
-    return None
 
 
 def _speedtest_epoch(value: Any) -> int | None:
@@ -485,6 +507,10 @@ def parse_speedtest_history(
             "lastrun": _speedtest_epoch(entry.get("time")),
             "source": "speedtest_api",
             "requested_wan": None,
+            # Each record carries its own ISP lookup, so on this route every
+            # WAN reports the operator of its own line rather than sharing
+            # whichever one the gateway tested last.
+            **_extract_isp_fields(entry),
         }
     return results
 
@@ -876,6 +902,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "lastrun": lastrun,
             "source": source,
             "requested_wan": requested,
+            # Attributed to the same WAN as the figures they arrived with,
+            # so a WAN can never be labelled with another line's ISP.
+            **{name: result.get(name) for name in SPEEDTEST_ISP_FIELDS},
         }
         _LOGGER.debug(
             "Attributed speedtest result to WAN%s (matched by %s, requested %s)",

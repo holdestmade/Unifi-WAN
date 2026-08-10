@@ -64,8 +64,8 @@ WAN_GEO_INFO_BLOCKS: Final[tuple[str, ...]] = (
 # The controller derives these by looking up each WAN's own public address,
 # so they identify the operator of that line. They come only from these
 # per-WAN blocks: the speedtest records carry no ISP fields at all, and the
-# speedtest block's "server" sub-object describes the speedtest server
-# rather than the subscriber's line.
+# speedtest block's "server" sub-object is the far end of the test, not the
+# subscriber's line - see SPEEDTEST_SERVER_FIELDS for that.
 #
 # Firmware differs over the spellings and a gateway that performs no lookup
 # reports none of them, so every field is optional and an absent one stays
@@ -76,4 +76,22 @@ WAN_ISP_FIELDS: Final[dict[str, tuple[str, ...]]] = {
     "asn": ("asn", "isp_asn"),
     "city": ("city",),
     "country_name": ("country_name", "country"),
+}
+
+# Which speedtest server the gateway tested against, read out of the
+# "server" sub-object of its speedtest-status block, as
+# {canonical name: spellings to try, best first}.
+#
+# Every name is prefixed "server_" so nothing here can be confused with the
+# subscriber-side lookup above: "city" in this sub-object is the server's
+# city, and labelling a line with it would be wrong twice over.
+#
+# Unlike the ISP details this is not reported per WAN. The gateway records
+# one server, belonging to whichever run finished last, so it is attributed
+# to a WAN on the same evidence as the throughput it arrived with.
+SPEEDTEST_SERVER_FIELDS: Final[dict[str, tuple[str, ...]]] = {
+    "server_provider": ("provider", "sponsor", "name"),
+    "server_provider_url": ("provider_url", "url"),
+    "server_city": ("city",),
+    "server_country": ("country", "country_name"),
 }

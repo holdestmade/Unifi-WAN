@@ -83,8 +83,12 @@ TO_REDACT: set[str] = {
     "native_networkconf_id",
     "site_id",
     "hostname",
-    # Speedtest server location, which locates the subscriber too
+    # Speedtest server location, which locates the subscriber too. The
+    # "server_" spellings are the canonical names the integration copies
+    # these into, and would otherwise slip past the raw ones above.
     "provider_url",
+    "server_provider_url",
+    "server_city",
     "city",
     "lat",
     "lon",

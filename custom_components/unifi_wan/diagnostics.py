@@ -90,12 +90,12 @@ TO_REDACT: set[str] = {
     "lon",
     "latitude",
     "longitude",
-    # The ISP lookup a speedtest record carries. Together with the location
-    # above, the operator and its AS number narrow a subscriber down much
-    # as an address does. Redaction replaces values, not keys, and leaves
-    # nulls alone, so whether the controller populated each field - the
-    # thing worth debugging - is still visible. "country_name" is left
-    # intact: a country on its own identifies nobody.
+    # The gateway's per-WAN ISP lookup (its geo_info blocks). Together with
+    # the location above, the operator and its AS number narrow a
+    # subscriber down much as an address does. Redaction replaces values,
+    # not keys, and leaves nulls alone, so whether the controller populated
+    # each field - the thing worth debugging - is still visible.
+    # "country_name" is left intact: a country on its own identifies nobody.
     "asn",
     "isp_asn",
     "isp",
@@ -218,6 +218,10 @@ async def async_get_config_entry_diagnostics(
         "wan_status": data.wan_status,
         "speedtest": data.speedtest,
         "per_wan_speedtest": data.per_wan_speedtest,
+        # What the ISP sensors read: the gateway's geo_info blocks merged
+        # down to one record per WAN. Shows at a glance which WANs the
+        # gateway looked up and which fields it filled in.
+        "geo_info": data.geo_info,
         # What the sensors are actually showing, which can lag the above.
         "latched_speedtest_results": runtime.speedtest_results,
         "per_wan_api_available": data.speedtest_history_raw is not None,

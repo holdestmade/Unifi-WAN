@@ -47,23 +47,33 @@ SPEEDTEST_POLL_SECONDS: Final = 15
 GATEWAY_DEVICES: Final = ["udm", "ugw", "uxg", "uxg-pro", "ucg-ultra", "ucg"]
 MAX_WAN_INTERFACES: Final = 4
 
-# ISP and geolocation details the controller records alongside a speedtest
-# result, as {canonical name: record spellings to try, best first}.
+# The gateway's blocks of per-WAN ISP and geolocation details, in the order
+# they are consulted. Each is keyed by WAN network group ("WAN", "WAN2"),
+# the same convention as last_wan_interfaces. A later block only fills in a
+# field the earlier ones left unset: "last_geo_info" in particular is a
+# cut-down record that often carries the operator alone.
+WAN_GEO_INFO_BLOCKS: Final[tuple[str, ...]] = (
+    "geo_info",
+    "active_geo_info",
+    "last_geo_info",
+)
+
+# ISP and geolocation details to read out of those blocks, as
+# {canonical name: spellings to try, best first}.
 #
-# These describe the line the test ran over - the public address it went out
-# from and the operator that address belongs to - which is what identifies a
-# WAN's ISP. They are only ever read from a speedtest record itself: the
-# uplink section's own address is not evidence of what a test used, and the
-# gateway block's "server" sub-object describes the speedtest server rather
-# than the subscriber's line.
+# The controller derives these by looking up each WAN's own public address,
+# so they identify the operator of that line. They come only from these
+# per-WAN blocks: the speedtest records carry no ISP fields at all, and the
+# speedtest block's "server" sub-object describes the speedtest server
+# rather than the subscriber's line.
 #
-# Firmware differs over the spellings and older records carry none of them,
-# so every field is optional and an absent one stays unset.
-SPEEDTEST_ISP_FIELDS: Final[dict[str, tuple[str, ...]]] = {
-    "isp_name": ("isp_name", "isp", "client_isp"),
-    "isp_organization": ("isp_organization", "isp_org", "organization", "org"),
-    "asn": ("asn", "isp_asn", "as_number"),
-    "city": ("city", "client_city"),
-    "country_name": ("country_name", "country", "client_country"),
-    "ip": ("ip", "public_ip", "external_ip", "client_ip", "source_ip"),
+# Firmware differs over the spellings and a gateway that performs no lookup
+# reports none of them, so every field is optional and an absent one stays
+# unset.
+WAN_ISP_FIELDS: Final[dict[str, tuple[str, ...]]] = {
+    "isp_name": ("isp_name", "isp"),
+    "isp_organization": ("isp_organization", "isp_org", "organization"),
+    "asn": ("asn", "isp_asn"),
+    "city": ("city",),
+    "country_name": ("country_name", "country"),
 }

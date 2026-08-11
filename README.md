@@ -9,6 +9,7 @@ Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud
 - Speedtest automation with manual triggers and binary sensors for insight into the test lifecycle
 - Speedtest server identification per WAN — which provider, host and location the test ran against
 - ISP identification per WAN — provider, organisation, ASN and location, from the lookup the gateway performs against each WAN's own public address
+- Redacted diagnostics for bug reports, and unredacted raw JSON dumps for looking at your own data
 
 Primary UniFi Network API endpoints used:
 
@@ -169,6 +170,11 @@ There is no separate ISP IP sensor: the public address these are derived from is
   - Optional `wan` field selects a specific WAN interface (e.g. `2`); omit it to test the active WAN  
   - The test runs in the background; sensors refresh automatically once the controller reports a new result
 
+- **`unifi_wan.dump_raw_data`**
+  - Writes an **unredacted** JSON file of everything the controller returns to `config/unifi_wan_dumps/`, for your own inspection — see [Raw data dumps](#raw-data-dumps) below  
+  - Optional `keep` field sets how many dumps to keep per gateway (default `10`)  
+  - Returns the paths written, so calling it from **Developer tools → Actions** shows where the file landed
+
 ---
 
 ## Options
@@ -243,6 +249,31 @@ Credentials, MAC addresses, public IP addresses, serial numbers, account identif
 Because addresses are hidden, whether two of them matched is reported in the `derived` section rather than left to be inferred. **Please attach this file when opening an issue.**
 
 **Please Check the file for any data you do not want public before posting it publicly**
+
+---
+
+## Raw data dumps
+
+For looking at your own data, redaction is only in the way — the hidden fields are usually the ones that explain the behaviour. The `unifi_wan.dump_raw_data` action writes the same information with **nothing removed**, to a file on the Home Assistant host.
+
+**Developer tools → Actions → UniFi WAN: Dump raw data → Perform action**
+
+Files are written to `config/unifi_wan_dumps/`, one per configured gateway, named `unifi_wan_<site>_<entry>_<YYYYmmdd-HHMMSS>.json`. The ten most recent per gateway are kept and older ones deleted; the `keep` field changes that. The action returns the paths it wrote, so the response pane in Developer tools tells you exactly where to look. Copy them off the host with the File editor / Samba / SSH add-on, or with `scp`.
+
+Each file contains:
+
+- **`controller`** — every endpoint the integration reads, fetched fresh and captured verbatim, with the URL, HTTP status and content type alongside each body:
+  - `stat_device` — the full site payload, **every device**, not just the gateway
+  - `stat_device_gateway` — the cheap gateway-only endpoint behind the live rate sensors
+  - `v2_speedtest` — the per-WAN speedtest history. Captured even when it fails: a `404` here is the answer to “why are my per-WAN speedtest sensors empty?”
+- **`parsed`** — what the integration made of it: the WAN sections, `wan_alive`, `wan_status`, the normalised speedtest result, the per-WAN results and the `geo_info` blocks behind the ISP sensors. The device list is omitted (it is already in `stat_device` above, verbatim) and replaced by a `device_count`.
+- **`parsed_rates`** — the same, from the fast per-gateway poll, when that interval is enabled
+- **`derived`** — the conclusions: the resolved active WAN and how it was matched, the latched per-WAN speedtest results the sensors are showing, and whether the controller accepts targeted speedtests
+- **`entry`** — your configured host, site and options
+
+Nothing is uploaded and nothing is offered for download — the file has to be fetched off the host deliberately.
+
+> ⚠️ **These files are unredacted.** They contain your public IP addresses, MAC addresses, serial numbers, site and device identifiers, DNS servers and the ISP/geolocation lookup for each WAN. **Do not attach one to a GitHub issue or post it publicly** — use **Download diagnostics** for that, which redacts all of the above. The only field held back is your API key, which is not controller data.
 
 ---
 

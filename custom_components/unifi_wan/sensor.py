@@ -23,10 +23,11 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.config_entries import ConfigEntry
 
-from .const import DOMAIN, GATEWAY_RESULT_MATCH_SECONDS
+from .const import DOMAIN
 from . import (
     UniFiWanData,
     UniFiWanRuntimeData,
+    gateway_result_wan,
     interface_to_wan_number,
     resolve_active_wan,
 )
@@ -216,44 +217,13 @@ def _has_figures(result: dict[str, Any]) -> bool:
 def _gateway_result_is_wan(d: UniFiWanData, wan_number: int | None) -> bool:
     """Whether the gateway's last-run block may be shown as that WAN's result.
 
-    The block is overwritten by whichever WAN ran last, so a block that names
-    an interface only counts as that interface's WAN. Where it names none,
-    these gateway-wide sensors follow the active uplink and the block is the
-    only global result the controller keeps, so it is shown as the active
-    WAN's - except where a per-WAN record of the same moment identifies the
-    run as another WAN's, which is the one case that would put a non-active
-    line's throughput on these sensors.
-
-    This is deliberately looser than gateway_speedtest_wan, which decides
-    where a result is *latched*: these sensors are replaced by the active
-    WAN's next run, while the per-WAN sensors and the speedtest server keep
-    what they are given.
+    Defers to gateway_result_wan, the same rule the integration records
+    per-WAN results by, so a figure can never appear on these sensors
+    without appearing on that WAN's own.
     """
     if wan_number is None:
         return False
-    iface = d.speedtest.get("source_interface")
-    if iface:
-        mapped = interface_to_wan_number(iface, d.wan)
-        if mapped is not None:
-            return mapped == wan_number
-        # An interface the controller named but that matches no WAN section.
-        # It says nothing about which WAN this was, so it is treated the same
-        # as naming none at all.
-    if len(d.wan) <= 1:
-        return True
-    lastrun = _epoch(d.speedtest.get("lastrun"))
-    if lastrun is None:
-        return True
-    for other, record in d.per_wan_speedtest.items():
-        if other == wan_number:
-            continue
-        other_run = _epoch(record.get("lastrun"))
-        if (
-            other_run is not None
-            and abs(other_run - lastrun) <= GATEWAY_RESULT_MATCH_SECONDS
-        ):
-            return False
-    return True
+    return gateway_result_wan(d, wan_number) == wan_number
 
 
 def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
@@ -267,7 +237,15 @@ def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
     """
     active, _ = resolve_active_wan(d)
     candidates: list[dict[str, Any]] = []
-    if active is not None and d.per_wan_speedtest:
+    if active is not None:
+        # What this WAN's own sensors are showing. The integration records it
+        # from these same two sources, so it is normally the newest of the
+        # three - but unlike them it is remembered, which is what stops these
+        # sensors falling back to an older figure when the gateway rewrites
+        # its block or the controller drops a record.
+        latched = d.speedtest_latched.get(active)
+        if latched:
+            candidates.append(latched)
         record = d.per_wan_speedtest.get(active)
         if record:
             candidates.append(record)

@@ -61,6 +61,7 @@ from .const import (
     MAX_DUMP_KEEP,
     SPEEDTEST_TIMEOUT_SECONDS,
     SPEEDTEST_POLL_SECONDS,
+    GATEWAY_RESULT_MATCH_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,6 +101,11 @@ class UniFiWanData:
     # The per-WAN speedtest API's last response, kept verbatim so diagnostics
     # can show what the controller actually returned. None when unavailable.
     speedtest_history_raw: dict[str, Any] | None = None
+    # The per-WAN results this entry has latched, by WAN number. Shared by
+    # reference with the runtime store, so the gateway-wide sensors read
+    # exactly what the per-WAN sensors show rather than recomputing it.
+    # Empty until the entry is set up, and for data built outside one.
+    speedtest_latched: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -856,6 +862,61 @@ def gateway_speedtest_wan(d: UniFiWanData) -> int | None:
     return None
 
 
+def _attribution_source(d: UniFiWanData, wan_number: int) -> str:
+    """How the gateway's block came to be recorded against a WAN, for the
+    per-WAN sensors' "attributed_by" attribute.
+    """
+    iface = d.speedtest.get("source_interface")
+    if iface and interface_to_wan_number(iface, d.wan) == wan_number:
+        return "source_interface"
+    if len(d.wan) == 1:
+        return "only_wan"
+    return "active_wan"
+
+
+def gateway_result_wan(d: UniFiWanData, active: int | None) -> int | None:
+    """Which WAN the gateway's last-run block counts as, or None.
+
+    Looser than gateway_speedtest_wan, which answers the same question for
+    the speedtest server alone: the server latches with no later run to
+    correct a wrong guess, while throughput is replaced by that WAN's next
+    run. Both the gateway-wide sensors and the per-WAN results this module
+    latches use *this* rule, so the two can never show different figures for
+    the same WAN.
+
+    The block is claimed for the interface it names, for the only WAN where
+    there is one, and otherwise for the active uplink - which is what the
+    controller tests when it is not told otherwise. The exception is a block
+    a per-WAN record of the same moment identifies as another WAN's run:
+    that is the one case where treating it as the active WAN's would put a
+    non-active line's throughput on the active line's sensors.
+    """
+    iface = d.speedtest.get("source_interface")
+    if iface:
+        mapped = interface_to_wan_number(iface, d.wan)
+        if mapped is not None:
+            return mapped
+        # An interface the controller named but that matches no WAN section
+        # says nothing about which WAN ran, so it is treated as naming none.
+    if len(d.wan) == 1:
+        return next(iter(d.wan))
+    if active is None:
+        return None
+    lastrun = _speedtest_epoch(d.speedtest.get("lastrun"))
+    if lastrun is None:
+        return None
+    for other, record in d.per_wan_speedtest.items():
+        if other == active:
+            continue
+        other_run = _speedtest_epoch(record.get("lastrun"))
+        if (
+            other_run is not None
+            and abs(other_run - lastrun) <= GATEWAY_RESULT_MATCH_SECONDS
+        ):
+            return None
+    return active
+
+
 async def _async_migrate_registry(
     hass: HomeAssistant, entry: ConfigEntry, host: str, site: str
 ) -> None:
@@ -944,10 +1005,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     client = UnifiWanClient(hass, host, api_key, site, verify_ssl)
 
+    # Per-WAN speedtest results latched by _process_speedtest_result. The
+    # controller only stores the latest result, so the integration attributes
+    # each completed run to a WAN and keeps it here. Declared before the
+    # coordinator because every UniFiWanData it builds carries a reference to
+    # it, which is how the gateway-wide sensors read the same figures the
+    # per-WAN sensors show.
+    speedtest_results: dict[int, dict[str, Any]] = {}
+
     async def _update_devices() -> UniFiWanData:
         """Fetch and process data."""
         raw = await client.get_devices()
         data = _extract_wan_data(raw)
+        data.speedtest_latched = speedtest_results
         # Best effort: controllers that offer it report a result per WAN,
         # which beats inferring which WAN a global result belonged to.
         history = await client.get_speedtest_history()
@@ -996,10 +1066,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     speedtest_running: bool = False
     unsub_auto: CALLBACK_TYPE | None = None
 
-    # Per-WAN speedtest results latched by _process_speedtest_result. The
-    # controller only stores the latest result, so the integration attributes
-    # each completed run to a WAN and keeps it here.
-    speedtest_results: dict[int, dict[str, Any]] = {}
     # WAN number requested for the speedtest currently in flight, if any.
     # Used only to report on the controller's behaviour - never to attribute
     # a result. See _process_speedtest_result.
@@ -1080,11 +1146,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # not every firmware adds a run started outside its own schedule
             # to that history, and a WAN whose record then never moves would
             # leave these sensors reporting a days-old figure while tests
-            # keep completing. The gateway's result is folded in too, but
-            # only for the WAN it can be *shown* to belong to - with records
-            # to contradict a guess, the active-uplink fallback used further
-            # down is not applied here.
-            gateway_wan = gateway_speedtest_wan(data)
+            # keep completing. The gateway's result is folded in too, under
+            # the same rule the gateway-wide sensors display it by, so the
+            # two families of sensor cannot disagree about one WAN.
+            gateway_wan = gateway_result_wan(data, resolve_active_wan(data)[0])
             gateway_result = data.speedtest
             has_figures = (
                 gateway_result.get("down") is not None
@@ -1103,11 +1168,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "up": gateway_result.get("up"),
                     "ping": gateway_result.get("ping"),
                     "lastrun": gateway_result.get("lastrun"),
-                    "source": (
-                        "source_interface"
-                        if gateway_result.get("source_interface")
-                        else "only_wan"
-                    ),
+                    "source": _attribution_source(data, gateway_wan),
                     "requested_wan": pending_speedtest_wan,
                     **_server_for(gateway_wan),
                 }

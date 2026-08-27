@@ -27,7 +27,6 @@ from .const import DOMAIN, GATEWAY_RESULT_MATCH_SECONDS
 from . import (
     UniFiWanData,
     UniFiWanRuntimeData,
-    gateway_speedtest_wan,
     interface_to_wan_number,
     resolve_active_wan,
 )
@@ -209,6 +208,11 @@ def _active_wan_attributes(d: UniFiWanData) -> dict[str, Any]:
     }
 
 
+def _has_figures(result: dict[str, Any]) -> bool:
+    """Whether a speedtest result actually measured anything."""
+    return result.get("down") is not None or result.get("up") is not None
+
+
 def _gateway_result_is_wan(d: UniFiWanData, wan_number: int | None) -> bool:
     """Whether the gateway's last-run block may be shown as that WAN's result.
 
@@ -269,6 +273,11 @@ def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
             candidates.append(record)
     if _gateway_result_is_wan(d, active):
         candidates.append(d.speedtest)
+    # A result has to carry figures to be worth showing. The gateway rewrites
+    # its block around a run and can carry a fresh timestamp with nothing in
+    # it; picking that on newest-wins would blank sensors that have a
+    # perfectly good previous result to show.
+    candidates = [c for c in candidates if _has_figures(c)]
     if candidates:
         return max(candidates, key=lambda r: _epoch(r.get("lastrun")) or 0), active
 
@@ -308,9 +317,16 @@ def _active_speedtest_server(d: UniFiWanData) -> dict[str, Any]:
     source for the newest-wins rule to arbitrate - applying it anyway would
     blank these sensors every time a per-WAN record happened to be the
     fresher of the two.
+
+    The block counts as the active WAN's on the same terms as its throughput
+    does, rather than on the stricter evidence gateway_speedtest_wan wants:
+    a gateway that names the interface only while a run is fresh would
+    otherwise blank these sensors again minutes later. Nothing latches here -
+    the next poll re-reads them - so the wrong-guess-forever risk that
+    strictness guards against does not arise.
     """
     active, _ = resolve_active_wan(d)
-    if active is None or gateway_speedtest_wan(d) != active:
+    if active is None or not _gateway_result_is_wan(d, active):
         return {}
     return d.speedtest
 

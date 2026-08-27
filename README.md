@@ -57,7 +57,7 @@ It does not support:
 
 These report the **active WAN's** speedtest result, so on a multi-WAN gateway they always match the per-WAN sensors of whichever WAN is currently the uplink. Testing a non-active WAN updates that WAN's own sensors and leaves these alone.
 
-Two sources can hold that result — the controller's per-WAN record and the gateway's own last-run block — and the newer of the two is shown. Where the gateway names no interface for its run, the block is taken as the active WAN's unless a per-WAN record of the same moment shows it belonged to another line. On a multi-WAN gateway whose active uplink cannot be resolved at all, the newest result of any WAN is shown rather than nothing, and **UniFi Speedtest WAN Interface** names the WAN it describes.
+Two sources can hold that result — the controller's per-WAN record and the gateway's own last-run block — and the newer of the two that actually carries figures is shown. Where the gateway names no interface for its run, the block is taken as the active WAN's unless a per-WAN record of the same moment shows it belonged to another line; some firmware names the interface only while a run is fresh, and without this the sensors would fall back to the previous result minutes later. On a multi-WAN gateway whose active uplink cannot be resolved at all, the newest result of any WAN is shown rather than nothing, and **UniFi Speedtest WAN Interface** names the WAN it describes.
 
 Where the controller has no per-WAN records there is only one result to report, and these show it: the gateway’s `speedtest-status` block, falling back to the equivalent fields on the `uplink` section for firmware that does not report it.
 

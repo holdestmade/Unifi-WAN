@@ -822,8 +822,18 @@ async def _async_migrate_registry(
         _LOGGER.warning("Could not migrate legacy unique IDs: %s", e)
 
     dev_reg = dr.async_get(hass)
-    # Legacy releases used a non-standard 3-tuple identifier
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, host, site)})  # type: ignore[arg-type]
+    # Legacy releases used a non-standard 3-tuple identifier. The legacy device
+    # was created under this same config entry, so the entry-scoped lookup
+    # (HA 2026.9+) finds it; older cores lack that method and still allow the
+    # unscoped lookup without a deprecation warning.
+    legacy_identifier = (DOMAIN, host, site)
+    if hasattr(dev_reg, "async_get_device_by_identifier"):
+        device = dev_reg.async_get_device_by_identifier(
+            legacy_identifier,  # type: ignore[arg-type]
+            entry.entry_id,
+        )
+    else:
+        device = dev_reg.async_get_device(identifiers={legacy_identifier})  # type: ignore[arg-type]
     if device:
         dev_reg.async_update_device(
             device.id, new_identifiers={(DOMAIN, entry.entry_id)}

@@ -23,7 +23,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.config_entries import ConfigEntry
 
-from .const import DOMAIN
+from .const import DOMAIN, GATEWAY_RESULT_MATCH_SECONDS
 from . import (
     UniFiWanData,
     UniFiWanRuntimeData,
@@ -66,6 +66,17 @@ def _mbps(val: Any) -> float | None:
         return round(float(val) * 8 / 1_000_000, 2)
     except (TypeError, ValueError):
         return None
+
+
+def _epoch(val: Any) -> int | None:
+    """A speedtest timestamp as epoch seconds, or None if there isn't one."""
+    try:
+        ts = int(val)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    return ts // 1000 if ts > 100_000_000_000 else ts
 
 
 def _ts_date(val: Any) -> datetime | None:
@@ -199,18 +210,46 @@ def _active_wan_attributes(d: UniFiWanData) -> dict[str, Any]:
 
 
 def _gateway_result_is_wan(d: UniFiWanData, wan_number: int | None) -> bool:
-    """Whether the gateway's last-run block holds that WAN's result.
+    """Whether the gateway's last-run block may be shown as that WAN's result.
 
-    The block is overwritten by whichever WAN ran last, so it only counts as
-    a given WAN's when the controller names that interface - or when the
-    gateway has a single WAN and there is nothing else it could be.
+    The block is overwritten by whichever WAN ran last, so a block that names
+    an interface only counts as that interface's WAN. Where it names none,
+    these gateway-wide sensors follow the active uplink and the block is the
+    only global result the controller keeps, so it is shown as the active
+    WAN's - except where a per-WAN record of the same moment identifies the
+    run as another WAN's, which is the one case that would put a non-active
+    line's throughput on these sensors.
+
+    This is deliberately looser than gateway_speedtest_wan, which decides
+    where a result is *latched*: these sensors are replaced by the active
+    WAN's next run, while the per-WAN sensors and the speedtest server keep
+    what they are given.
     """
     if wan_number is None:
         return False
     iface = d.speedtest.get("source_interface")
     if iface:
-        return interface_to_wan_number(iface, d.wan) == wan_number
-    return len(d.wan) <= 1
+        mapped = interface_to_wan_number(iface, d.wan)
+        if mapped is not None:
+            return mapped == wan_number
+        # An interface the controller named but that matches no WAN section.
+        # It says nothing about which WAN this was, so it is treated the same
+        # as naming none at all.
+    if len(d.wan) <= 1:
+        return True
+    lastrun = _epoch(d.speedtest.get("lastrun"))
+    if lastrun is None:
+        return True
+    for other, record in d.per_wan_speedtest.items():
+        if other == wan_number:
+            continue
+        other_run = _epoch(record.get("lastrun"))
+        if (
+            other_run is not None
+            and abs(other_run - lastrun) <= GATEWAY_RESULT_MATCH_SECONDS
+        ):
+            return False
+    return True
 
 
 def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
@@ -231,13 +270,23 @@ def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
     if _gateway_result_is_wan(d, active):
         candidates.append(d.speedtest)
     if candidates:
-        return max(candidates, key=lambda r: r.get("lastrun") or 0), active
+        return max(candidates, key=lambda r: _epoch(r.get("lastrun")) or 0), active
 
     if d.per_wan_speedtest:
-        # Per-WAN records exist but none belong to the active WAN, and the
-        # gateway block belongs to a different one. Reporting nothing beats
-        # reporting another line's throughput.
-        return {}, None
+        if active is not None:
+            # The active WAN has simply never been tested, and the gateway
+            # block belongs to a different one. Reporting nothing beats
+            # reporting another line's throughput.
+            return {}, None
+        # Which WAN is the active uplink could not be resolved at all. The
+        # newest record there is, labelled with the WAN it came from, is
+        # more use than blank sensors - the WAN Interface sensor alongside
+        # them says which line it describes.
+        wan_number, record = max(
+            d.per_wan_speedtest.items(),
+            key=lambda item: _epoch(item[1].get("lastrun")) or 0,
+        )
+        return record, wan_number
 
     # No per-WAN records at all: the gateway's single result is everything
     # this controller offers, so report it and say which WAN it came from.

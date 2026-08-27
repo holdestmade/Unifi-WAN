@@ -171,6 +171,22 @@ class UnifiWanClient:
         except Exception as e:
             raise UpdateFailed(f"Connection error: {e}") from e
 
+    @staticmethod
+    def _api_error(body: Any) -> str | None:
+        """The controller's own error message from a response body, if the
+        body is one.
+
+        The controller answers some rejected commands with HTTP 200 and the
+        refusal in the envelope rather than in the status code, so a bare
+        200 is not on its own proof that a command was accepted.
+        """
+        meta = body.get("meta") if isinstance(body, dict) else None
+        if not isinstance(meta, dict):
+            return None
+        if str(meta.get("rc") or "").lower() != "error":
+            return None
+        return str(meta.get("msg") or "unknown error")
+
     async def _post(self, url: str, payload: dict) -> tuple[int, Any]:
         """POST and return (status, decoded body). Status 0 means the request
         itself failed. A 200 with an empty or non-JSON body still counts as
@@ -194,6 +210,12 @@ class UnifiWanClient:
         status, body = await self._post(self._url(path), payload)
         if status != 200:
             _LOGGER.error("HTTP %s for %s", status, self._url(path))
+            return {"ok": False}
+        if (error := self._api_error(body)) is not None:
+            # A 200 that says "no": worth surfacing, because the command
+            # simply not happening is otherwise only visible as a result
+            # that never arrives.
+            _LOGGER.error("Controller refused %s: %s", path, error)
             return {"ok": False}
         return body if isinstance(body, dict) else {"ok": True}
 
@@ -292,14 +314,21 @@ class UnifiWanClient:
         tried: list[str] = []
         for url, payload in attempts:
             status, body = await self._post(url, payload)
+            # A 200 carrying an error in the envelope is a refusal, not an
+            # acceptance: latching onto such an endpoint would leave every
+            # later run silently unperformed.
+            error = self._api_error(body)
             # Record the path from /network/ onwards; the host and site add
             # nothing and the site name is not worth putting in a log.
-            tried.append(f"{url.split('/network/', 1)[-1]}={status}")
-            if status == 200:
+            tried.append(
+                f"{url.split('/network/', 1)[-1]}={status}"
+                + (f" ({error})" if error else "")
+            )
+            if status == 200 and error is None:
                 self.targeted_speedtest_supported = True
                 _LOGGER.debug("Speedtest for WAN%s accepted by %s", wan_number, url)
                 return body if isinstance(body, dict) else {"ok": True}
-            if status not in (400, 401, 403, 404, 405):
+            if error is None and status not in (400, 401, 403, 404, 405):
                 # A real failure rather than "this endpoint isn't the one".
                 break
         self.targeted_speedtest_supported = False
@@ -570,6 +599,21 @@ def _speedtest_epoch(value: Any) -> int | None:
     return ts // 1000 if ts > 100_000_000_000 else ts
 
 
+def _is_newer(candidate: Any, stored: Any) -> bool:
+    """Whether one speedtest timestamp is later than another.
+
+    Both sides are coerced through _speedtest_epoch so a millisecond
+    timestamp from the per-WAN API compares correctly against the gateway
+    block's seconds. Anything uncomparable counts as not newer, so a result
+    is only ever replaced on evidence that it has been superseded.
+    """
+    new_ts = _speedtest_epoch(candidate)
+    if new_ts is None:
+        return False
+    old_ts = _speedtest_epoch(stored)
+    return old_ts is None or new_ts > old_ts
+
+
 def parse_speedtest_history(
     body: dict[str, Any] | None, wan: dict[int, dict[str, Any]]
 ) -> dict[int, dict[str, Any]]:
@@ -743,14 +787,27 @@ def resolve_active_wan(d: UniFiWanData) -> tuple[int | None, str]:
         for wan_number, wan_data in d.wan.items():
             if u_ip == wan_data.get("ip"):
                 return wan_number, "uplink_ip"
-    u_name = str(d.uplink.get("name") or "").strip().lower()
-    if u_name:
+    # Firmware differs over which key carries the uplink's interface and
+    # which carries the WAN section's, so every combination is compared
+    # rather than the one pairing this gateway happens to use.
+    u_names = {
+        str(d.uplink.get(key) or "").strip().lower()
+        for key in ("name", "ifname")
+    } - {""}
+    if u_names:
         for wan_number, wan_data in d.wan.items():
-            if u_name == str(wan_data.get("ifname") or "").strip().lower():
-                return wan_number, "uplink_ifname"
+            for key in ("ifname", "name"):
+                if str(wan_data.get(key) or "").strip().lower() in u_names:
+                    return wan_number, "uplink_ifname"
     up_numbers = [n for n, wan_data in d.wan.items() if wan_data.get("up")]
     if len(up_numbers) == 1:
         return up_numbers[0], "only_wan_up"
+    # A dual-WAN gateway in failover reports both WANs up while only one is
+    # carrying traffic, so the controller's own "alive" flag is the last
+    # thing left that distinguishes them.
+    alive_numbers = [n for n, alive in d.wan_alive.items() if alive and n in d.wan]
+    if len(alive_numbers) == 1:
+        return alive_numbers[0], "only_wan_alive"
     return None, "no_match"
 
 
@@ -1005,9 +1062,55 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # and keeps the same timestamp while doing so, so a poll
                 # that catches a half-written record must still accept the
                 # completed one rather than treating it as already seen.
-                if speedtest_results.get(wan_number) == result:
+                stored = speedtest_results.get(wan_number)
+                if stored == result:
+                    continue
+                # A record older than what this WAN already holds describes a
+                # run the gateway's own block reported first (see below).
+                # Without this the two sources would overwrite each other on
+                # every poll. An equal timestamp is not older, so the
+                # half-written record above is still completed.
+                if stored is not None and _is_newer(
+                    stored.get("lastrun"), result.get("lastrun")
+                ):
                     continue
                 speedtest_results[wan_number] = dict(result)
+                changed = True
+            # A per-WAN record can be older than the gateway's own block:
+            # not every firmware adds a run started outside its own schedule
+            # to that history, and a WAN whose record then never moves would
+            # leave these sensors reporting a days-old figure while tests
+            # keep completing. The gateway's result is folded in too, but
+            # only for the WAN it can be *shown* to belong to - with records
+            # to contradict a guess, the active-uplink fallback used further
+            # down is not applied here.
+            gateway_wan = gateway_speedtest_wan(data)
+            gateway_result = data.speedtest
+            has_figures = (
+                gateway_result.get("down") is not None
+                or gateway_result.get("up") is not None
+            )
+            if (
+                gateway_wan is not None
+                and has_figures
+                and _is_newer(
+                    gateway_result.get("lastrun"),
+                    (speedtest_results.get(gateway_wan) or {}).get("lastrun"),
+                )
+            ):
+                speedtest_results[gateway_wan] = {
+                    "down": gateway_result.get("down"),
+                    "up": gateway_result.get("up"),
+                    "ping": gateway_result.get("ping"),
+                    "lastrun": gateway_result.get("lastrun"),
+                    "source": (
+                        "source_interface"
+                        if gateway_result.get("source_interface")
+                        else "only_wan"
+                    ),
+                    "requested_wan": pending_speedtest_wan,
+                    **_server_for(gateway_wan),
+                }
                 changed = True
             if changed:
                 _LOGGER.debug(
@@ -1097,7 +1200,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Trigger a speedtest, optionally on a specific WAN interface, and
         wait (with a timeout) for the controller to report a fresh result.
         """
-        nonlocal pending_speedtest_wan
+        nonlocal pending_speedtest_wan, per_wan_speedtest_supported
         if speedtest_running:
             _LOGGER.debug("Speedtest already in progress; ignoring trigger")
             return
@@ -1117,22 +1220,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.warning("Cannot run speedtest: No gateway found.")
                 return
 
-            def _lastrun_of(gw: UniFiWanData | None) -> Any:
-                """The timestamp this run should be watching.
+            def _stamps(gw: UniFiWanData | None) -> dict[Any, Any]:
+                """Every timestamp a finished run could move, keyed by the
+                WAN number it belongs to and "gateway" for the global block.
 
-                A targeted run on a controller with a per-WAN speedtest API
-                may only update that WAN's record, leaving the gateway's
-                global result untouched, so watch the WAN's own timestamp
-                there and the global one otherwise.
+                Firmware differs over what a completed run updates: the
+                gateway's own block, that WAN's record in the per-WAN
+                speedtest API, or both - and a targeted run on a controller
+                that ignores the requested interface moves a different WAN's
+                record than the one asked for. Watching only the timestamp
+                this request asked for therefore reports a test that did run
+                as having timed out, so all of them are watched and the run
+                is judged on any of them moving.
                 """
                 if gw is None:
-                    return None
-                if wan_number is not None and gw.per_wan_speedtest:
-                    entry = gw.per_wan_speedtest.get(wan_number)
-                    return entry.get("lastrun") if entry else None
-                return gw.speedtest.get("lastrun")
+                    return {}
+                stamps: dict[Any, Any] = {"gateway": gw.speedtest.get("lastrun")}
+                for number, record in (gw.per_wan_speedtest or {}).items():
+                    stamps[number] = record.get("lastrun")
+                return stamps
 
-            last_run_before = _lastrun_of(gw_data)
+            async def _wait_for_result(before: dict[Any, Any]) -> list[Any]:
+                """Poll until a watched timestamp moves, and report which
+                ones did. Empty means the controller recorded nothing.
+                """
+                deadline = hass.loop.time() + SPEEDTEST_TIMEOUT_SECONDS
+                while hass.loop.time() < deadline:
+                    await asyncio.sleep(SPEEDTEST_POLL_SECONDS)
+                    await device_coordinator.async_request_refresh()
+                    after = _stamps(device_coordinator.data)
+                    moved = [k for k, v in after.items() if v and before.get(k) != v]
+                    if moved:
+                        return moved
+                return []
+
+            def _describe(keys: list[Any]) -> str:
+                return (
+                    ", ".join(
+                        "the gateway's own result" if k == "gateway" else f"WAN{k}"
+                        for k in keys
+                    )
+                    or "nothing"
+                )
+
+            before = _stamps(gw_data)
             # With a single WAN the whole-gateway speedtest already is that
             # WAN's speedtest, so don't ask the controller to target it -
             # firmware that rejects targeted requests would otherwise turn
@@ -1142,21 +1273,54 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if target is not None:
                 iface = (gw_data.wan.get(target) or {}).get("ifname")
             await client.run_speedtest(mac_local, target, iface)
+            moved = await _wait_for_result(before)
 
-            # Poll until the controller reports a new result or we time out.
-            deadline = hass.loop.time() + SPEEDTEST_TIMEOUT_SECONDS
-            while hass.loop.time() < deadline:
-                await asyncio.sleep(SPEEDTEST_POLL_SECONDS)
-                await device_coordinator.async_request_refresh()
-                gw_data = device_coordinator.data
-                last_run = _lastrun_of(gw_data)
-                if last_run and last_run != last_run_before:
-                    break
-            else:
+            if not moved and target is not None and client.targeted_speedtest_supported:
+                # The controller took the targeted request and then recorded
+                # nothing at all, so the interface it was given is one it
+                # will not test. Rather than leaving the press unmeasured,
+                # stop using the targeted form and repeat the run as a plain
+                # whole-gateway test, which is what every other controller
+                # falls back to.
+                client.targeted_speedtest_supported = False
                 _LOGGER.warning(
-                    "Speedtest did not report a result within %s seconds",
+                    "The controller accepted a speedtest for WAN%s (interface "
+                    "%r) but recorded no result within %s seconds. Repeating it "
+                    "as a whole-gateway speedtest and not targeting an "
+                    "interface again this session.",
+                    target,
+                    iface,
                     SPEEDTEST_TIMEOUT_SECONDS,
                 )
+                before = _stamps(device_coordinator.data)
+                await client.run_speedtest(mac_local)
+                moved = await _wait_for_result(before)
+
+            if not moved:
+                _LOGGER.warning(
+                    "Speedtest did not report a result within %s seconds "
+                    "(requested %s; watched %s). The controller accepted the "
+                    "request but never recorded a result - check whether a "
+                    "speedtest run from the UniFi UI updates the gateway.",
+                    SPEEDTEST_TIMEOUT_SECONDS,
+                    f"WAN{wan_number}" if wan_number is not None else "the active WAN",
+                    _describe(sorted(before, key=str)),
+                )
+            elif target is not None and target not in moved:
+                other_wans = [k for k in moved if isinstance(k, int)]
+                if other_wans and per_wan_speedtest_supported is not False:
+                    # The run happened, just not where it was asked for.
+                    per_wan_speedtest_supported = False
+                    _LOGGER.warning(
+                        "Speedtest was requested on WAN%s but the controller "
+                        "recorded the result against %s, so this gateway does "
+                        "not honour per-WAN speedtest requests. Results are "
+                        "still recorded against the WAN the controller names, "
+                        "and the automatic speedtest will stop cycling "
+                        "interfaces.",
+                        target,
+                        _describe(other_wans),
+                    )
         except Exception as e:
             _LOGGER.error("Speedtest trigger failed: %s", e)
         finally:
@@ -1178,12 +1342,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """
         nonlocal auto_wan_index
         data: UniFiWanData | None = device_coordinator.data
-        # A controller with a per-WAN speedtest API records each run against
-        # its own WAN, so cycling is worthwhile there - but only if it will
-        # accept a targeted request in the first place.
-        has_per_wan_api = bool(data and data.per_wan_speedtest)
-        pointless = client.targeted_speedtest_supported is False or (
-            per_wan_speedtest_supported is False and not has_per_wan_api
+        # Cycling is only worth the extra tests where the controller both
+        # accepts a targeted request and acts on it. Once it has been seen to
+        # test a WAN other than the one asked for, every run measures the same
+        # line whichever API records the result - and on a controller that
+        # records per WAN it would also spend a full timeout waiting on a
+        # record that is never written.
+        pointless = (
+            client.targeted_speedtest_supported is False
+            or per_wan_speedtest_supported is False
         )
         if pointless:
             await _run_speedtest_now()

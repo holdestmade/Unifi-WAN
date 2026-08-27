@@ -57,6 +57,8 @@ It does not support:
 
 These report the **active WAN's** speedtest result, so on a multi-WAN gateway they always match the per-WAN sensors of whichever WAN is currently the uplink. Testing a non-active WAN updates that WAN's own sensors and leaves these alone.
 
+Two sources can hold that result — the controller's per-WAN record and the gateway's own last-run block — and the newer of the two that actually carries figures is shown. Where the gateway names no interface for its run, the block is taken as the active WAN's unless a per-WAN record of the same moment shows it belonged to another line; some firmware names the interface only while a run is fresh, and without this the sensors would fall back to the previous result minutes later. On a multi-WAN gateway whose active uplink cannot be resolved at all, the newest result of any WAN is shown rather than nothing, and **UniFi Speedtest WAN Interface** names the WAN it describes.
+
 Where the controller has no per-WAN records there is only one result to report, and these show it: the gateway’s `speedtest-status` block, falling back to the equivalent fields on the `uplink` section for firmware that does not report it.
 
 - **UniFi Speedtest Download**  
@@ -91,10 +93,10 @@ These are only created when the gateway has **more than one WAN**. With a single
 
 Where these values come from depends on what the controller offers, and each sensor's `attributed_by` attribute records which route was used:
 
-1. **`GET /proxy/network/v2/api/site/<site>/speedtest`** (`attributed_by: speedtest_api`) — newer controllers keep a speedtest record *per WAN*, each tagged with its own `wan_networkgroup`. When this is available every WAN shows its own genuine result, including WANs that are not the active uplink and tests started from the UniFi UI. No guesswork is involved.
+1. **`GET /proxy/network/v2/api/site/<site>/speedtest`** (`attributed_by: speedtest_api`) — newer controllers keep a speedtest record *per WAN*, each tagged with its own `wan_networkgroup`. When this is available every WAN shows its own genuine result, including WANs that are not the active uplink and tests started from the UniFi UI. No guesswork is involved. Some firmware does not add every run to that history, so a gateway result that is newer than a WAN's record and names that WAN's interface (`attributed_by: source_interface`) is used as well — without it a WAN whose record never moves would report a days-old figure while tests kept completing.
 2. **The gateway's single global result**, attributed to one WAN — used only when the controller has no per-WAN API. The global result is overwritten by every run regardless of interface, so it is attributed on evidence: `speedtest-status.source_interface` (`attributed_by: source_interface`), else the WAN that is currently the active uplink (`attributed_by: active_wan`). The WAN a test was *requested* on is never used, because firmware that ignores the request always tests the active uplink and trusting it labels one line's throughput as another's.
 
-On route 2 a WAN only accumulates results while it is the active uplink, and asking for a test on a non-active WAN updates the active WAN's sensors instead — the other WAN keeps its previous value rather than being given a figure that belongs to a different line. That case is logged as a warning, and the automatic speedtest stops cycling interfaces since every run would measure the same WAN.
+On route 2 a WAN only accumulates results while it is the active uplink, and asking for a test on a non-active WAN updates the active WAN's sensors instead — the other WAN keeps its previous value rather than being given a figure that belongs to a different line. That case is logged as a warning, and the automatic speedtest stops cycling interfaces since every run would measure the same WAN. The same applies on route 1: a controller seen to record a run against a WAN other than the one asked for is not asked again.
 
 Values survive Home Assistant restarts and only change when a speedtest actually runs on that WAN.
 
@@ -160,6 +162,8 @@ There is no separate ISP IP sensor: the public address these are derived from is
 - **Run UniFi Speedtest**
   - Triggers a one-off speedtest on the active UniFi gateway (plus one button per WAN interface, where the gateway has more than one WAN)  
   - The test runs in the background; the integration polls the controller until a new result is reported (up to 5 minutes) and then refreshes the `Speedtest` sensors. `UniFi Speedtest In Progress` stays `on` while it waits.
+  - A run counts as finished when **any** result the controller keeps moves — the gateway's own last-run block or any per-WAN record — because firmware differs over which of them a run updates, and a gateway that ignores the requested interface writes the result against a different WAN than the one asked for.
+  - Where a gateway accepts a per-WAN request and then records nothing at all, the run is repeated as a plain whole-gateway speedtest and that gateway is not asked to target an interface again for the rest of the session. Both are logged as warnings naming the WAN and the interface involved.
 
 ---
 

@@ -61,7 +61,9 @@ These show the same figure as the active WAN's own per-WAN sensor, because both 
 
 Two sources feed it — the controller's per-WAN record and the gateway's own last-run block — and the newer of the two that actually carries figures wins. Where the gateway names no interface for its run, the block is taken as the active WAN's unless a per-WAN record of the same moment shows it belonged to another line; some firmware names the interface only while a run is fresh, and without this the sensors would fall back to the previous result minutes later. On a multi-WAN gateway whose active uplink cannot be resolved at all, the newest result of any WAN is shown rather than nothing, and **UniFi Speedtest WAN Interface** names the WAN it describes.
 
-Where the controller has no per-WAN records there is only one result to report, and these show it: the gateway’s `speedtest-status` block, falling back to the equivalent fields on the `uplink` section for firmware that does not report it.
+Where the controller has no per-WAN records there is only one result to report, and these show it: the gateway’s `speedtest-status` block, falling back to the equivalent fields on the `uplink` section for firmware that does not report a block at all.
+
+Those two are separate records of separate runs, so a result is taken whole from one of them and never assembled field by field. The gateway rewrites its block around a run and can be caught with a field missing or the whole block empty; borrowing the missing field from the `uplink` section paired the current run's throughput with the timestamp of whichever older run those legacy fields last caught — months earlier on firmware that no longer maintains them. A WAN's recorded result never moves backwards in time either, so a stale record cannot displace a newer one even for the one poll it takes to correct itself.
 
 - **UniFi Speedtest Download**  
   - Gateway speedtest download result in **Mbit/s**  

@@ -14,23 +14,25 @@ Every controller response is captured verbatim, alongside what the
 integration parsed out of it, so a wrong sensor can be traced to either the
 data or the parsing without a second round trip.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, DUMP_DIR_NAME
+from .models import UniFiWanData
 
 if TYPE_CHECKING:
-    from . import UniFiWanRuntimeData
+    from .runtime import UniFiWanRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,8 +67,8 @@ def _safe(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", str(value or "unknown"))[:40]
 
 
-def _dump_dir(hass: HomeAssistant) -> str:
-    return hass.config.path(DUMP_DIR_NAME)
+def _dump_dir(hass: HomeAssistant) -> Path:
+    return Path(hass.config.path(DUMP_DIR_NAME))
 
 
 def _prefix(site: Any, entry_id: str) -> str:
@@ -85,33 +87,34 @@ def _filename(prefix: str, moment: datetime) -> str:
     return f"{prefix}{moment.strftime('%Y%m%d-%H%M%S')}.json"
 
 
-def _write_and_prune(path: str, payload: dict[str, Any], prefix: str, keep: int) -> int:
+def _write_and_prune(
+    path: Path, payload: dict[str, Any], prefix: str, keep: int
+) -> int:
     """Write the dump and drop the oldest files past ``keep``.
 
     Runs in the executor: this is blocking file I/O. Pruning matches on the
     entry's own prefix, so two configured gateways do not evict each other's
     dumps. Returns the size written, in bytes.
     """
-    directory = os.path.dirname(path)
-    os.makedirs(directory, exist_ok=True)
+    directory = path.parent
+    directory.mkdir(parents=True, exist_ok=True)
     # default=str so a value the controller sends in a shape json cannot
     # represent still lands in the file rather than failing the whole dump.
     text = json.dumps(payload, indent=2, default=str)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    path.write_text(text, encoding="utf-8")
 
-    existing = sorted(
-        name
-        for name in os.listdir(directory)
-        if name.startswith(prefix) and name.endswith(".json")
-    )
     # The timestamp is fixed-width and in the filename, so a lexical sort is
     # a chronological one.
-    for name in existing[: max(0, len(existing) - keep)]:
+    existing = sorted(
+        entry
+        for entry in directory.iterdir()
+        if entry.name.startswith(prefix) and entry.suffix == ".json"
+    )
+    for stale in existing[: max(0, len(existing) - keep)]:
         try:
-            os.remove(os.path.join(directory, name))
+            stale.unlink()
         except OSError as err:  # pragma: no cover - a stale file is not fatal
-            _LOGGER.debug("Could not remove old dump %s: %s", name, err)
+            _LOGGER.debug("Could not remove old dump %s: %s", stale.name, err)
 
     return len(text.encode("utf-8"))
 
@@ -145,14 +148,9 @@ async def async_dump_entry(
     """Write one entry's dump and return a record of what was written."""
     now = dt_util.now()
     prefix = _prefix(runtime.site, entry_id)
-    path = os.path.join(_dump_dir(hass), _filename(prefix, now))
+    path = _dump_dir(hass) / _filename(prefix, now)
 
     endpoints = await _capture(runtime)
-
-    # Imported here rather than at module scope: these live in __init__,
-    # which is where this module is reached from, so importing them at the
-    # top would be a cycle.
-    from . import UniFiWanData, resolve_active_wan
 
     data: UniFiWanData | None = runtime.device_coordinator.data
     parsed: dict[str, Any] = {}
@@ -168,21 +166,25 @@ async def async_dump_entry(
         parsed.pop("devices", None)
         parsed["device_count"] = len(data.devices)
 
-        active_wan, match_reason = resolve_active_wan(data)
+        active_wan, match_reason = data.active_wan
         derived = {
             "wan_numbers": runtime.wan_numbers,
             "active_wan": active_wan,
             "match_reason": match_reason,
-            "latched_speedtest_results": runtime.speedtest_results,
+            "latched_speedtest_results": runtime.speedtest.results,
             "per_wan_api_available": data.speedtest_history_raw is not None,
             "targeted_speedtest_supported": runtime.client.targeted_speedtest_supported,
-            "auto_speedtest_enabled": runtime.auto_enabled,
-            "speedtest_running": runtime.get_speedtest_running(),
+            "per_wan_speedtest_honoured": runtime.speedtest.per_wan_supported,
+            "auto_speedtest_enabled": runtime.speedtest.auto_enabled,
+            "speedtest_running": runtime.speedtest.running,
         }
 
     rates = runtime.rates_coordinator
     rates_parsed: Any = None
     if rates is not None and rates.data is not None:
+        # The fast poll parses only as far as the rate sensors read, so this
+        # carries the uplink and little else by design. The endpoint's full
+        # response is captured verbatim under controller.stat_device_gateway.
         rates_parsed = asdict(rates.data)
         rates_parsed.pop("devices", None)
 
@@ -229,22 +231,32 @@ async def async_dump_entry(
         _write_and_prune, path, payload, prefix, keep
     )
     _LOGGER.info("Wrote unredacted UniFi WAN dump to %s (%s bytes)", path, size)
-    return {"path": path, "bytes": size, "site": runtime.site, "entry_id": entry_id}
+    return {
+        "path": str(path),
+        "bytes": size,
+        "site": runtime.site,
+        "entry_id": entry_id,
+    }
 
 
 async def async_dump_all(hass: HomeAssistant, keep: int) -> dict[str, Any]:
     """Dump every loaded config entry. One file each."""
     files: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    for entry_id, runtime in list(hass.data.get(DOMAIN, {}).items()):
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        runtime = getattr(entry, "runtime_data", None)
+        if runtime is None:
+            continue
         try:
-            files.append(await async_dump_entry(hass, entry_id, runtime, keep))
+            files.append(await async_dump_entry(hass, entry.entry_id, runtime, keep))
         except Exception as err:  # noqa: BLE001 - one entry must not sink the rest
-            _LOGGER.error("Could not write UniFi WAN dump for %s: %s", entry_id, err)
-            errors.append({"entry_id": entry_id, "error": str(err)})
+            _LOGGER.error(
+                "Could not write UniFi WAN dump for %s: %s", entry.entry_id, err
+            )
+            errors.append({"entry_id": entry.entry_id, "error": str(err)})
 
     result: dict[str, Any] = {
-        "directory": _dump_dir(hass),
+        "directory": str(_dump_dir(hass)),
         "files": files,
         "warning": WARNING,
     }

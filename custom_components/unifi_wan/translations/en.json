@@ -20,6 +20,18 @@
         "data": {
           "api_key": "API Key"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure UniFi WAN",
+        "description": "Change which console and site this gateway uses. Entities are kept.",
+        "data": {
+          "host": "Host / IP",
+          "api_key": "API Key",
+          "site": "Site",
+          "verify_ssl": "Verify SSL Certificate",
+          "auto_speedtest": "Run Speedtest Automatically",
+          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)"
+        }
       }
     },
     "error": {
@@ -32,7 +44,9 @@
     },
     "abort": {
       "already_configured": "This UniFi controller and site is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "wrong_console": "Those details point at a different console or site. Reconfigure keeps this entry's entities, so it can only follow the same gateway to a new address. Add the other console as a separate integration entry.",
+      "reconfigure_successful": "Reconfiguration was successful."
     }
   },
   "options": {
@@ -58,7 +72,8 @@
       "invalid_site": "The console returned 404 Not Found. Check the Site name (usually 'default', not the display name) and that the console runs UniFi OS (UDM/UDR/UXG/Cloud Key with firmware 2.x or later).",
       "ssl_error": "SSL certificate verification failed. Turn off 'Verify SSL Certificate' unless your console has a valid trusted certificate.",
       "timeout": "The console did not respond within 30 seconds. Check the Host/IP and that no firewall is blocking TCP port 443.",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "already_configured": "Another UniFi WAN entry is already configured for that console and site."
     }
   },
   "services": {

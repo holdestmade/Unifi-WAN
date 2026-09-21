@@ -1,0 +1,6 @@
+# The test suite exercises the parsing, the client and the speedtest state
+# machine with plain fakes, so it needs Home Assistant only for the types
+# and helpers the integration imports - not a running core.
+homeassistant>=2025.10.0
+pytest>=8
+pytest-asyncio>=0.24

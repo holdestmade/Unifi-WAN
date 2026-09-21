@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Final
+from datetime import UTC, datetime
+from typing import Any, Final
 
 from homeassistant.components.sensor import (
     RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
-    SensorStateClass,
     SensorEntityDescription,
+    SensorStateClass,
 )
-from homeassistant.const import UnitOfTime
+from homeassistant.const import UnitOfDataRate, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData
@@ -21,19 +23,16 @@ from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
-from homeassistant.config_entries import ConfigEntry
 
-from .const import DOMAIN, SPEEDTEST_SERVER_FIELDS
-from . import (
+from .const import SPEEDTEST_SERVER_FIELDS
+from .models import (
     UniFiWanData,
-    UniFiWanRuntimeData,
     gateway_result_wan,
     interface_to_wan_number,
-    resolve_active_wan,
+    speedtest_epoch,
 )
-
-
-DATA_RATE_UNIT_MEGABITS_PER_SECOND: Final = "Mbit/s"
+from .runtime import UniFiWanConfigEntry
+from .speedtest import SpeedtestManager
 
 # Bumped whenever per-WAN speedtest results stop being comparable with those
 # stored by earlier releases; values stamped with an older version are not
@@ -68,30 +67,22 @@ def _mbps(val: Any) -> float | None:
         return None
 
 
-def _epoch(val: Any) -> int | None:
-    """A speedtest timestamp as epoch seconds, or None if there isn't one."""
-    try:
-        ts = int(val)
-    except (TypeError, ValueError):
-        return None
-    if ts <= 0:
-        return None
-    return ts // 1000 if ts > 100_000_000_000 else ts
-
-
 def _ts_date(val: Any) -> datetime | None:
-    try:
-        ts = int(val)
-        if ts > 0:
-            return datetime.fromtimestamp(ts, tz=timezone.utc)
-    except (TypeError, ValueError):
-        pass
-    return None
+    """A speedtest timestamp as an aware datetime, or None if there isn't one.
+
+    Normalised through the shared helper, so a per-WAN record's
+    milliseconds render as a date rather than being read as seconds - a
+    figure far enough in the future that it was discarded entirely.
+    """
+    ts = speedtest_epoch(val)
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, tz=UTC)
 
 
 def _wan_id(d: UniFiWanData) -> str:
     """Infer Active WAN ID."""
-    wan_number, _ = resolve_active_wan(d)
+    wan_number, _ = d.active_wan
     return f"WAN{wan_number}" if wan_number is not None else "Unknown"
 
 
@@ -138,7 +129,9 @@ def _port_label(d: UniFiWanData, wan_data: dict[str, Any]) -> str | None:
     return None
 
 
-def _active_port_label(d: UniFiWanData, section: dict[str, Any], reason: str) -> str | None:
+def _active_port_label(
+    d: UniFiWanData, section: dict[str, Any], reason: str
+) -> str | None:
     """Chassis port for the active WAN, allowing the uplink block to supply
     it when the WAN section itself carries no port data.
 
@@ -170,7 +163,7 @@ def _wan_name(d: UniFiWanData) -> str:
     port rather than the raw interface name - "eth8" reads like port 8 but
     is in fact port 9, which is exactly the confusion this avoids.
     """
-    wan_number, reason = resolve_active_wan(d)
+    wan_number, reason = d.active_wan
     if wan_number is None:
         friendly = _friendly_wan_name(d.uplink)
         return friendly or "Unknown"
@@ -181,9 +174,10 @@ def _wan_name(d: UniFiWanData) -> str:
         friendly = _friendly_wan_name(d.uplink)
 
     label = friendly or f"WAN{wan_number}"
-    detail = _active_port_label(d, section, reason) or str(
-        section.get("ifname") or ""
-    ).strip()
+    detail = (
+        _active_port_label(d, section, reason)
+        or str(section.get("ifname") or "").strip()
+    )
     if detail and detail.lower() != label.lower():
         return f"{label} ({detail})"
     return label
@@ -191,7 +185,7 @@ def _wan_name(d: UniFiWanData) -> str:
 
 def _active_wan_attributes(d: UniFiWanData) -> dict[str, Any]:
     """Debug attributes showing how the active WAN was resolved."""
-    wan_number, reason = resolve_active_wan(d)
+    wan_number, reason = d.active_wan
     section = d.wan.get(wan_number) or {} if wan_number is not None else {}
     return {
         "active_wan": wan_number,
@@ -203,9 +197,7 @@ def _active_wan_attributes(d: UniFiWanData) -> dict[str, Any]:
         "uplink_comment": d.uplink.get("comment"),
         "wan_ips": {f"WAN{n}": (w or {}).get("ip") for n, w in d.wan.items()},
         "wan_ifnames": {f"WAN{n}": (w or {}).get("ifname") for n, w in d.wan.items()},
-        "wan_ports": {
-            f"WAN{n}": _port_label(d, w or {}) for n, w in d.wan.items()
-        },
+        "wan_ports": {f"WAN{n}": _port_label(d, w or {}) for n, w in d.wan.items()},
     }
 
 
@@ -235,7 +227,7 @@ def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
     when it demonstrably belongs to the active WAN - otherwise testing a
     non-active WAN would put its throughput back on these sensors.
     """
-    active, _ = resolve_active_wan(d)
+    active, _ = d.active_wan
     candidates: list[dict[str, Any]] = []
     if active is not None:
         # What this WAN's own sensors are showing. The integration records it
@@ -257,7 +249,9 @@ def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
     # perfectly good previous result to show.
     candidates = [c for c in candidates if _has_figures(c)]
     if candidates:
-        return max(candidates, key=lambda r: _epoch(r.get("lastrun")) or 0), active
+        return max(
+            candidates, key=lambda r: speedtest_epoch(r.get("lastrun")) or 0
+        ), active
 
     if d.per_wan_speedtest:
         if active is not None:
@@ -271,7 +265,7 @@ def _displayed_speedtest(d: UniFiWanData) -> tuple[dict[str, Any], int | None]:
         # them says which line it describes.
         wan_number, record = max(
             d.per_wan_speedtest.items(),
-            key=lambda item: _epoch(item[1].get("lastrun")) or 0,
+            key=lambda item: speedtest_epoch(item[1].get("lastrun")) or 0,
         )
         return record, wan_number
 
@@ -302,7 +296,7 @@ def _active_speedtest_server(d: UniFiWanData) -> dict[str, Any]:
     caught mid-rewrite. The block is consulted where nothing has been
     recorded yet, on the same terms its throughput is displayed by.
     """
-    active, _ = resolve_active_wan(d)
+    active, _ = d.active_wan
     if active is None:
         return {}
     latched = d.speedtest_latched.get(active) or {}
@@ -351,7 +345,7 @@ def _isp_value_fn(field: str) -> Callable[[UniFiWanData], Any]:
     """
 
     def value(d: UniFiWanData) -> Any:
-        active, _ = resolve_active_wan(d)
+        active, _ = d.active_wan
         if active is None:
             return None
         return (d.geo_info.get(active) or {}).get(field)
@@ -413,13 +407,13 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         key="wan_ipv4",
         name="UniFi WAN IPv4",
         icon="mdi:ip",
-        value_fn=lambda d: d.uplink.get("ip") or "unknown",
+        value_fn=lambda d: d.uplink.get("ip") or None,
     ),
     UniFiSensorDescription(
         key="wan_ipv6",
         name="UniFi WAN IPv6",
         icon="mdi:ip-network-outline",
-        value_fn=lambda d: d.uplink.get("ip6") or "unknown",
+        value_fn=lambda d: d.uplink.get("ip6") or None,
         attributes_fn=lambda d: {
             "uplink_keys": sorted((d.uplink or {}).keys()),
             "uplink_ip": d.uplink.get("ip"),
@@ -435,7 +429,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r")),
         use_rate_coordinator=True,
     ),
@@ -445,7 +439,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("tx_bytes-r")),
         use_rate_coordinator=True,
     ),
@@ -455,7 +449,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("rx_bytes-r")),
     ),
     UniFiSensorDescription(
@@ -464,7 +458,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
         value_fn=lambda d: _mbps(d.uplink.get("tx_bytes-r")),
     ),
     UniFiSensorDescription(
@@ -473,7 +467,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
         value_fn=lambda d: _active_speedtest(d).get("down"),
     ),
     UniFiSensorDescription(
@@ -482,7 +476,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
         value_fn=lambda d: _active_speedtest(d).get("up"),
     ),
     UniFiSensorDescription(
@@ -552,7 +546,7 @@ def _wan_speedtest_descriptions(
                 icon="mdi:download",
                 device_class=SensorDeviceClass.DATA_RATE,
                 state_class=SensorStateClass.MEASUREMENT,
-                native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+                native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
             ),
             "down",
             None,
@@ -564,7 +558,7 @@ def _wan_speedtest_descriptions(
                 icon="mdi:upload",
                 device_class=SensorDeviceClass.DATA_RATE,
                 state_class=SensorStateClass.MEASUREMENT,
-                native_unit_of_measurement=DATA_RATE_UNIT_MEGABITS_PER_SECOND,
+                native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
             ),
             "up",
             None,
@@ -630,10 +624,10 @@ def _wan_isp_descriptions(wan_number: int) -> tuple[UniFiSensorDescription, ...]
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniFiWanConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    runtime: UniFiWanRuntimeData = hass.data[DOMAIN][entry.entry_id]
+    runtime = entry.runtime_data
     rates_coord = runtime.rates_coordinator or runtime.device_coordinator
     device_coord = runtime.device_coordinator
 
@@ -658,14 +652,16 @@ async def async_setup_entry(
                 key=f"wan{wan_number}_ipv4",
                 name=f"UniFi WAN{wan_number} IPv4",
                 icon="mdi:ip",
-                value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip") or "unknown",
+                value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip") or None,
             )
-            entities.append(UniFiGenericSensor(device_coord, entry_id, device_info, ipv4))
+            entities.append(
+                UniFiGenericSensor(device_coord, entry_id, device_info, ipv4)
+            )
             ipv6 = UniFiSensorDescription(
                 key=f"wan{wan_number}_ipv6",
                 name=f"UniFi WAN{wan_number} IPv6",
                 icon="mdi:ip-network-outline",
-                value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip6") or "unknown",
+                value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip6") or None,
                 attributes_fn=lambda d, wn=wan_number: {
                     "wan_keys": sorted((d.wan.get(wn) or {}).keys()),
                     "ip": (d.wan.get(wn) or {}).get("ip"),
@@ -675,7 +671,9 @@ async def async_setup_entry(
                     "ip6_addresses": (d.wan.get(wn) or {}).get("ip6_addresses"),
                 },
             )
-            entities.append(UniFiGenericSensor(device_coord, entry_id, device_info, ipv6))
+            entities.append(
+                UniFiGenericSensor(device_coord, entry_id, device_info, ipv6)
+            )
 
             for isp_desc in _wan_isp_descriptions(wan_number):
                 entities.append(
@@ -685,7 +683,13 @@ async def async_setup_entry(
             for desc, field, transform in _wan_speedtest_descriptions(wan_number):
                 entities.append(
                     UniFiWanSpeedtestSensor(
-                        runtime, entry_id, device_info, desc, wan_number, field, transform
+                        runtime.speedtest,
+                        entry_id,
+                        device_info,
+                        desc,
+                        wan_number,
+                        field,
+                        transform,
                     )
                 )
 
@@ -699,7 +703,7 @@ class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
         self,
         coordinator: DataUpdateCoordinator,
         entry_id: str,
-        device_info: dict[str, Any],
+        device_info: DeviceInfo,
         description: UniFiSensorDescription,
     ) -> None:
         super().__init__(coordinator)
@@ -716,10 +720,12 @@ class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
         fn = self.entity_description.attributes_fn
         if fn is None:
             return None
-        try:
-            return fn(self.coordinator.data)
-        except Exception:
+        if self.coordinator.data is None:
             return None
+        # Deliberately not wrapped in a bare except: these callables only
+        # read the parsed payload, so anything raising here is a bug worth
+        # seeing rather than an attribute quietly going missing.
+        return fn(self.coordinator.data)
 
 
 class UniFiWanSpeedtestSensor(RestoreSensor):
@@ -736,15 +742,15 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
 
     def __init__(
         self,
-        runtime: UniFiWanRuntimeData,
+        speedtest: SpeedtestManager,
         entry_id: str,
-        device_info: dict[str, Any],
+        device_info: DeviceInfo,
         description: SensorEntityDescription,
         wan_number: int,
         field: str,
         transform: Callable[[Any], Any] | None = None,
     ) -> None:
-        self._runtime = runtime
+        self._speedtest = speedtest
         self._wan_number = wan_number
         self._field = field
         self._transform = transform
@@ -758,7 +764,7 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
         """Stamp stored values with the attribution scheme that produced
         them, so a later release can tell which ones it may trust.
         """
-        result = self._runtime.speedtest_results.get(self._wan_number)
+        result = self._speedtest.results.get(self._wan_number)
         return _WanSpeedtestExtraData(
             version=ATTRIBUTION_VERSION,
             source=result.get("source") if result else None,
@@ -766,13 +772,15 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        if await self._restored_value_is_trusted():
-            if (last := await self.async_get_last_sensor_data()) is not None:
-                self._restored_value = last.native_value
+        if (
+            await self._restored_value_is_trusted()
+            and (last := await self.async_get_last_sensor_data()) is not None
+        ):
+            self._restored_value = last.native_value
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,
-                self._runtime.speedtest_result_signal,
+                self._speedtest.result_signal,
                 self._handle_result,
             )
         )
@@ -802,7 +810,7 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
 
     @property
     def native_value(self) -> Any:
-        result = self._runtime.speedtest_results.get(self._wan_number)
+        result = self._speedtest.results.get(self._wan_number)
         if result is None:
             return self._restored_value
         value = result.get(self._field)
@@ -810,7 +818,7 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        result = self._runtime.speedtest_results.get(self._wan_number)
+        result = self._speedtest.results.get(self._wan_number)
         if result is None:
             return {"attributed_by": None, "restored": True}
         return {

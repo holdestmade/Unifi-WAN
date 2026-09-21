@@ -1,8 +1,13 @@
+"""Constants for the UniFi WAN integration.
+
+Deliberately free of Home Assistant imports, so that this module and the
+parsing in models.py can be exercised by tests and tooling without a
+Home Assistant install. PLATFORMS lives in __init__.py for that reason.
+"""
+
 from __future__ import annotations
 
 from typing import Final
-
-from homeassistant.const import Platform
 
 DOMAIN: Final = "unifi_wan"
 
@@ -13,25 +18,30 @@ CONF_VERIFY_SSL: Final = "verify_ssl"
 
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 DEFAULT_SCAN_INTERVAL: Final = 30
+# The floor is applied at setup as well as in the options dialog: a value
+# stored by an older release, or edited by hand, would otherwise be taken
+# as given - and zero means a poll with no interval at all.
+MIN_SCAN_INTERVAL: Final = 5
+MAX_SCAN_INTERVAL: Final = 3600
 LEGACY_CONF_DEVICE_INTERVAL: Final = "device_interval"
 
 CONF_RATE_INTERVAL: Final = "rate_interval_seconds"
 DEFAULT_RATE_INTERVAL: Final = 5
+# Zero disables the fast poll entirely; anything above it is held to this
+# floor, since a sub-second poll would spend the console's rate limit on
+# nothing a dashboard can render.
+MIN_RATE_INTERVAL: Final = 1
+MAX_RATE_INTERVAL: Final = 600
 
 CONF_AUTO_SPEEDTEST: Final = "auto_speedtest"
 CONF_AUTO_SPEEDTEST_MINUTES: Final = "auto_speedtest_minutes"
 DEFAULT_AUTO_SPEEDTEST: Final = True
 DEFAULT_AUTO_SPEEDTEST_MINUTES: Final = 60
+MIN_AUTO_SPEEDTEST_MINUTES: Final = 1
+MAX_AUTO_SPEEDTEST_MINUTES: Final = 10080
 
 DEFAULT_SITE: Final = "default"
 DEFAULT_VERIFY_SSL: Final = False
-
-PLATFORMS: Final = [
-    Platform.SENSOR,
-    Platform.BINARY_SENSOR,
-    Platform.BUTTON,
-    Platform.SWITCH,
-]
 
 SIGNAL_SPEEDTEST_RUNNING: Final = f"{DOMAIN}_speedtest_running"
 SIGNAL_AUTO_SPEEDTEST_CHANGED: Final = f"{DOMAIN}_auto_speedtest_changed"
@@ -80,7 +90,19 @@ SPEEDTEST_POLL_SECONDS: Final = 15
 # showing a non-active line's throughput.
 GATEWAY_RESULT_MATCH_SECONDS: Final = 120
 
-GATEWAY_DEVICES: Final = ["udm", "ugw", "uxg", "uxg-pro", "ucg-ultra", "ucg"]
+# Known gateway "type" values, most specific first. A console running a
+# model newer than this list is caught by models._looks_like_gateway, which
+# matches on the shape of the payload instead.
+GATEWAY_DEVICES: Final = [
+    "udm",
+    "ugw",
+    "uxg",
+    "uxg-pro",
+    "ucg-ultra",
+    "ucg",
+    "efg",
+    "udr",
+]
 MAX_WAN_INTERFACES: Final = 4
 
 # The gateway's blocks of per-WAN ISP and geolocation details, in the order

@@ -1,7 +1,7 @@
 # UniFi WAN
 Home Assistant custom component
 
-Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud key) / UGW / EFG / UGC-Ultra etc.)
+Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud key) / UGW / EFG / UCG-Ultra etc.)
 
 ## Features
 
@@ -22,7 +22,8 @@ Get the API key from your UniFi Console UI:
 
 > **Settings → Control Plane → Integrations → API Keys**
 
-This integration currently only supports UniFi OS consoles (UDM, UDR, UDM Pro, UXG, UFG etc.) using a local API key generated on the console, and the /proxy/network/api endpoints.
+This integration currently only supports UniFi OS consoles (UDM, UDR, UDM Pro, UXG, UCG, EFG etc.) using a local API key generated on the console, and the /proxy/network/api endpoints.
+A console whose gateway model is newer than the list this integration knows is still recognised, by its reporting an uplink together with WAN interfaces.
 It does not support:
 - Standalone UniFi Network running in a VM or Docker without UniFi OS.
 - API keys generated on unifi.ui.com for cloud-only access.
@@ -208,14 +209,15 @@ All options are available via the integration’s **Options** UI and can be chan
 - **Scan interval (seconds)**  
   - How often to poll full `stat/device` for gateway, WAN sections, speedtest info, etc.  
   - This is the “heavier” call (all devices).  
-  - Keep this reasonably low frequency (e.g. 15–60s).  
+  - Keep this reasonably low frequency (e.g. 15–60s). The minimum is 5 seconds.  
   - UniFi API limit is ~100 calls per minute per API key.
 - **Fast WAN rate interval (seconds)**  
   - Poll interval for the per-gateway endpoint: `stat/device/<mac>`  
   - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** (`UniFi WAN Download` / `UniFi WAN Upload`) and totals integration.  
   - Scan-interval WAN rate sensors (`UniFi WAN Download (Scan Interval)` / `UniFi WAN Upload (Scan Interval)`) continue updating on the Scan interval even when this is disabled.  
   - Set this to **0** to disable fast per-second polling entirely.  
-  - You can set this to **1–2 seconds** for near real-time graphs when needed.
+  - You can set this to **1–2 seconds** for near real-time graphs when needed.  
+  - This poll parses only as far as the two rate sensors read, so running it once a second costs a fraction of a full scan.
 
 **Speedtest automation**
 
@@ -225,6 +227,22 @@ All options are available via the integration’s **Options** UI and can be chan
   - How often to trigger an automatic speedtest when enabled.  
   - With more than one WAN interface, each run cycles to the next WAN that currently has link, so every WAN accumulates its own per-WAN speedtest results over time. With a single WAN the plain speedtest command is used.  
   - The rotation stops automatically if the gateway has no per-WAN speedtest API *and* is seen to ignore the requested interface, since every run would then measure the active uplink anyway.
+
+---
+
+## Changing the console address
+
+**Settings → Devices & Services → UniFi WAN → ⋮ → Reconfigure**
+
+Use this when the console moves to a new address or you change the site. It
+keeps every entity and its history, and moves the integration's own identity
+with it, so the same console cannot end up configured twice. The same fields
+appear under **Options**, which now follows a change the same way.
+
+Every request to the console times out after 30 seconds. A console that
+accepts the connection and then stops answering therefore delays one poll,
+rather than blocking it for the five minutes that was the underlying
+library's default.
 
 ---
 
@@ -285,6 +303,32 @@ Nothing is uploaded and nothing is offered for download — the file has to be f
 
 ---
 
+## Development
+
+The integration is laid out so the parts that make decisions can be tested
+without a running Home Assistant:
+
+| Module | What it holds |
+| --- | --- |
+| `models.py` | The payload shapes and every parsing decision. Imports no Home Assistant at all. |
+| `api.py` | The HTTP client and what it remembers about a console. |
+| `coordinator.py` | The full poll and the fast rate poll. |
+| `speedtest.py` | Triggering a run, waiting for it, and attributing the result to a WAN. |
+| `runtime.py` | What one configured gateway carries, reached as `entry.runtime_data`. |
+
+Run the tests with:
+
+```bash
+pip install -r requirements-test.txt
+pytest
+ruff check custom_components tests
+```
+
+GitHub Actions runs those plus `hassfest` and HACS validation on every push
+and pull request.
+
+---
+
 ## Install
 
 ### HACS
@@ -306,3 +350,10 @@ Nothing is uploaded and nothing is offered for download — the file has to be f
    - SSL verification preference
 
 Once added, you’ll get a single UniFi WAN device with all the WAN, speedtest, and usage sensors attached.
+
+---
+
+## Licence
+
+[MIT](LICENSE).
+

@@ -1,13 +1,17 @@
 {
   "domain": "unifi_wan",
   "name": "UniFi WAN",
-  "version": "1.8.5",
-  "documentation": "https://github.com/holdestmade/Unifi-WAN",
-  "issue_tracker": "https://github.com/holdestmade/Unifi-WAN/issues",
-  "codeowners": ["@holdestmade"],
+  "codeowners": [
+    "@holdestmade"
+  ],
   "config_flow": true,
+  "documentation": "https://github.com/holdestmade/Unifi-WAN",
+  "integration_type": "hub",
   "iot_class": "local_polling",
-  "loggers": ["custom_components.unifi_wan"],
+  "issue_tracker": "https://github.com/holdestmade/Unifi-WAN/issues",
+  "loggers": [
+    "custom_components.unifi_wan"
+  ],
   "requirements": [],
-  "integration_type": "hub"
+  "version": "1.9.0"
 }

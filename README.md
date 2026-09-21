@@ -29,6 +29,7 @@ Primary UniFi Network API endpoints used:
 - `GET /proxy/network/api/s/<site>/stat/device/<mac>` — lightweight per-gateway stats for fast WAN rates
 - `POST /proxy/network/api/s/<site>/cmd/devmgr` — trigger a speedtest on the gateway
 - `GET /proxy/network/v2/api/site/<site>/speedtest` — per-WAN speedtest records, where the controller supports it (older firmware answers 404 and is asked only once)
+- `GET /proxy/network/api/s/<site>/rest/portforward` — the site's forwarding rules. Read only by the raw data dump, so what a console returns can be looked at; no sensor reads it and nothing is written back
 
 Get the API key from your UniFi Console UI:
 
@@ -314,6 +315,7 @@ Each file contains:
   - `stat_device` — the full site payload, **every device**, not just the gateway
   - `stat_device_gateway` — the cheap gateway-only endpoint behind the live rate sensors
   - `v2_speedtest` — the per-WAN speedtest history. Captured even when it fails: a `404` here is the answer to “why are my per-WAN speedtest sensors empty?”
+  - `port_forwards` — the site's forwarding rules, including each rule's `pfwd_interface` (the WAN an inbound rule is bound to). Captured for the same reason: whether a local API key may read them at all, and how this firmware spells the interface, differ by console
 - **`parsed`** — what the integration made of it: the WAN sections, `wan_alive`, `wan_status`, the normalised speedtest result, the per-WAN results and the `geo_info` blocks behind the ISP sensors. The device list is omitted (it is already in `stat_device` above, verbatim) and replaced by a `device_count`.
 - **`parsed_rates`** — the same, from the fast per-gateway poll, when that interval is enabled
 - **`derived`** — the conclusions: the resolved active WAN and how it was matched, the latched per-WAN speedtest results the sensors are showing, and whether the controller accepts targeted speedtests
@@ -321,7 +323,7 @@ Each file contains:
 
 Nothing is uploaded and nothing is offered for download — the file has to be fetched off the host deliberately.
 
-> ⚠️ **These files are unredacted.** They contain your public IP addresses, MAC addresses, serial numbers, site and device identifiers, DNS servers and the ISP/geolocation lookup for each WAN. **Do not attach one to a GitHub issue or post it publicly** — use **Download diagnostics** for that, which redacts all of the above. The only field held back is your API key, which is not controller data.
+> ⚠️ **These files are unredacted.** They contain your public IP addresses, MAC addresses, serial numbers, site and device identifiers, DNS servers, the ISP/geolocation lookup for each WAN, and your forwarding rules — which internal host and port each one opens from outside. **Do not attach one to a GitHub issue or post it publicly** — use **Download diagnostics** for that, which redacts the rest and carries no forwarding rules at all. The only field held back is your API key, which is not controller data.
 
 ---
 

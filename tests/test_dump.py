@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from helpers import gateway_payload
+from helpers import gateway_payload, make_client
 from unifi_wan.dump import (
     WITHHELD,
+    _capture,
     _filename,
     _prefix,
     _safe,
@@ -135,3 +136,62 @@ def test_the_snapshot_survives_an_empty_payload():
     snapshot = _snapshot(extract_wan_data(None))
     assert snapshot["device_count"] == 0
     assert snapshot["gateway"] is None
+
+
+# ----------------------------------------------------------- what is fetched
+
+
+class _Runtime:
+    """Enough of UniFiWanRuntimeData for _capture."""
+
+    def __init__(self, client, mac: str | None = "aa:bb:cc:dd:ee:ff") -> None:
+        self.client = client
+        self.dev_meta = {"mac": mac}
+
+
+async def test_every_endpoint_is_captured_with_its_status():
+    """A dump's job is to answer "what does this console actually say", so
+    each endpoint is recorded with the status code alongside the body.
+    """
+    client = make_client()
+    endpoints = await _capture(_Runtime(client))
+
+    assert set(endpoints) == {
+        "stat_device",
+        "v2_speedtest",
+        "port_forwards",
+        "stat_device_gateway",
+    }
+    assert all(capture["status"] == 200 for capture in endpoints.values())
+
+
+async def test_the_forwarding_rules_are_asked_for_on_the_classic_api():
+    """The rules live on the classic REST path, not the v2 API."""
+    client = make_client()
+    await _capture(_Runtime(client))
+
+    urls = [url for _, url, _ in client._session.calls]
+    assert "https://10.0.0.1/proxy/network/api/s/default/rest/portforward" in urls
+
+
+async def test_a_console_that_refuses_the_rules_still_yields_a_dump():
+    """Whether a local API key may read the forwarding rules differs by
+    console, and the refusal is itself the finding - so it is recorded
+    rather than allowed to sink the endpoints that did answer.
+    """
+    # stat_device, v2_speedtest, port_forwards, then the gateway-only path:
+    # the order BASE_ENDPOINTS is gathered in.
+    client = make_client([(200, {"data": []}), (200, {"data": []}), (403, None)])
+    endpoints = await _capture(_Runtime(client))
+
+    assert endpoints["port_forwards"]["status"] == 403
+    assert endpoints["stat_device"]["status"] == 200
+    assert endpoints["stat_device_gateway"]["status"] == 200
+
+
+async def test_the_gateway_endpoint_says_why_it_was_skipped():
+    """Without a MAC there is no per-device URL to call, and a missing key
+    would read as the endpoint having failed.
+    """
+    endpoints = await _capture(_Runtime(make_client(), mac=None))
+    assert "skipped" in endpoints["stat_device_gateway"]

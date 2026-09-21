@@ -8,6 +8,7 @@ that comparison, and this needs no logger configuration to produce.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any, Final
 
@@ -131,32 +132,104 @@ REDACT_SUFFIXES: Final[tuple[str, ...]] = (
 )
 
 
+# Values that identify a subscriber whatever field they arrive in. The key
+# lists above are the first line and will always trail the firmware; these
+# shapes are the second, and they do not care what a new field is called.
+#
+# Deliberately narrow. Each pattern is anchored and matches a whole value,
+# so a model name, an interface name or a status word cannot trip it.
+_MAC_RE: Final = re.compile(r"[0-9a-f]{2}([:-])(?:[0-9a-f]{2}\1){4}[0-9a-f]{2}", re.I)
+_IPV4_RE: Final = re.compile(r"(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:/\d{1,2})?")
+# Either the "::" run only IPv6 has, or the full eight groups. "12:34:56"
+# is a clock reading, not an address, and does not match either.
+_IPV6_RE: Final = re.compile(
+    r"(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%[0-9a-z]+)?(?:/\d{1,3})?", re.I
+)
+# Opaque identifiers: object ids, hashes, keys. Long enough that a colour,
+# a short code or a serial fragment cannot reach it by accident.
+_HEX_TOKEN_RE: Final = re.compile(r"[0-9a-f]{24,}", re.I)
+_EMAIL_RE: Final = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+# Keys whose values are never judged by shape, because something harmless
+# there legitimately looks like an address. Firmware versions are the
+# reason this exists: "6.5.55.0" is a dotted quad and is exactly the field
+# a bug report needs.
+VALUE_SAFE_KEYS: Final[frozenset[str]] = frozenset(
+    {"version", "sw_version", "firmware_version", "required_version", "board_rev"}
+)
+VALUE_SAFE_SUFFIXES: Final[tuple[str, ...]] = ("_version", "_rev")
+
+
 def _should_redact(key: Any) -> bool:
     return isinstance(key, str) and (key in TO_REDACT or key.endswith(REDACT_SUFFIXES))
 
 
-def _redact(data: Any) -> Any:
-    """Recursively redact by key name.
+def _value_judged_by_shape(key: Any) -> bool:
+    """Whether a value under this key may be redacted for how it looks."""
+    if not isinstance(key, str):
+        return True
+    return not (key in VALUE_SAFE_KEYS or key.endswith(VALUE_SAFE_SUFFIXES))
+
+
+def _looks_identifying(value: Any) -> bool:
+    """Whether a value is an address or an opaque identifier on its face.
+
+    Catches the field a firmware update introduced last week, which no
+    list here has heard of yet, and which is the way a diagnostics file
+    posted to a public issue actually leaks something.
+    """
+    if not isinstance(value, str):
+        return False
+    candidate = value.strip()
+    if len(candidate) < 7:
+        # Shorter than the shortest thing worth matching ("1.1.1.1"), so
+        # nothing here can be an address.
+        return False
+    if _MAC_RE.fullmatch(candidate) or _EMAIL_RE.fullmatch(candidate):
+        return True
+    if _HEX_TOKEN_RE.fullmatch(candidate):
+        return True
+    if _IPV4_RE.fullmatch(candidate):
+        # Every octet in range, so "6.5.55.300" stays a version string.
+        octets = _IPV4_RE.fullmatch(candidate).groups()
+        return all(int(octet) <= 255 for octet in octets)
+    if "::" in candidate or candidate.count(":") == 7:
+        return bool(_IPV6_RE.fullmatch(candidate))
+    return False
+
+
+def _redact_value(key: Any, value: Any) -> Any:
+    """One value, redacted by its key's name or by its own shape."""
+    if value is None or (isinstance(value, str) and not value):
+        # Nulls and blanks reveal nothing, and replacing them only hides
+        # that the controller left a field unset - which is often the
+        # answer to the question being asked.
+        return value
+    if _should_redact(key):
+        return REDACTED
+    if isinstance(value, (Mapping, list)):
+        return _redact(value, key)
+    if _value_judged_by_shape(key) and _looks_identifying(value):
+        return REDACTED
+    return value
+
+
+def _redact(data: Any, parent_key: Any = None) -> Any:
+    """Recursively redact by key name, and by the shape of the value.
 
     Home Assistant's async_redact_data matches keys exactly, so this adds
-    the suffix rules above. Empty and null values are left alone, as they
-    reveal nothing and replacing them only obscures that a field was unset.
+    the suffix rules above and then a shape check, which is what stops a
+    field nobody has seen before from carrying an address into a public
+    issue.
+
+    Items inside a list inherit the key the list arrived under, so a list
+    of addresses under a safe-by-name key is still judged on its contents.
     """
     if isinstance(data, list):
-        return [_redact(item) for item in data]
+        return [_redact_value(parent_key, item) for item in data]
     if not isinstance(data, Mapping):
         return data
-    redacted: dict[Any, Any] = {}
-    for key, value in data.items():
-        if value is None or (isinstance(value, str) and not value):
-            redacted[key] = value
-        elif _should_redact(key):
-            redacted[key] = REDACTED
-        elif isinstance(value, (Mapping, list)):
-            redacted[key] = _redact(value)
-        else:
-            redacted[key] = value
-    return redacted
+    return {key: _redact_value(key, value) for key, value in data.items()}
 
 
 def _device_summary(devices: list[dict], gateway: dict[str, Any] | None) -> list[dict]:

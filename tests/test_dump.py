@@ -5,7 +5,16 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from unifi_wan.dump import WITHHELD, _filename, _prefix, _safe, _write_and_prune
+from helpers import gateway_payload
+from unifi_wan.dump import (
+    WITHHELD,
+    _filename,
+    _prefix,
+    _safe,
+    _snapshot,
+    _write_and_prune,
+)
+from unifi_wan.models import extract_wan_data
 
 
 def test_filenames_sort_chronologically():
@@ -74,3 +83,55 @@ def test_the_api_key_placeholder_cannot_read_as_missing_data():
     """A dump is unredacted; the one held-back field must say so plainly."""
     assert "WITHHELD" in WITHHELD
     assert "not controller data" in WITHHELD
+
+
+# ------------------------------------------------------- the parsed snapshot
+
+
+def _data_with_devices(count: int):
+    payload = gateway_payload(wan={"ip": "203.0.113.1", "ifname": "eth8"})
+    payload["data"].extend(
+        {"type": "uap", "model": f"U6-{n}", "port_table": [{"port_idx": n}]}
+        for n in range(count)
+    )
+    return extract_wan_data(payload)
+
+
+def test_the_snapshot_leaves_out_the_device_list():
+    """It is already in the stat/device capture verbatim, and copying it was
+    the most expensive thing this service did.
+    """
+    snapshot = _snapshot(_data_with_devices(50))
+    assert "devices" not in snapshot
+    assert snapshot["device_count"] == 51
+
+
+def test_the_snapshot_keeps_the_gateway_and_the_parsed_fields():
+    snapshot = _snapshot(_data_with_devices(2))
+    assert snapshot["gateway"]["model"] == "UDMPRO"
+    assert snapshot["wan"][1]["ifname"] == "eth8"
+    for field in ("uplink", "wan_alive", "wan_status", "speedtest", "geo_info"):
+        assert field in snapshot
+
+
+def test_the_snapshot_does_not_alias_live_data():
+    """The JSON is written in an executor thread while the event loop keeps
+    running, so serialising live objects would race the next poll.
+    """
+    data = _data_with_devices(1)
+    data.speedtest_latched = {1: {"down": 100.0}}
+    snapshot = _snapshot(data)
+
+    data.wan[1]["ifname"] = "changed"
+    data.speedtest_latched[2] = {"down": 999.0}
+    data.uplink["ip"] = "changed"
+
+    assert snapshot["wan"][1]["ifname"] == "eth8"
+    assert snapshot["speedtest_latched"] == {1: {"down": 100.0}}
+    assert snapshot["uplink"]["ip"] == "203.0.113.1"
+
+
+def test_the_snapshot_survives_an_empty_payload():
+    snapshot = _snapshot(extract_wan_data(None))
+    assert snapshot["device_count"] == 0
+    assert snapshot["gateway"] is None

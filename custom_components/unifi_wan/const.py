@@ -58,6 +58,10 @@ ATTR_KEEP: Final = "keep"
 DUMP_DIR_NAME: Final = "unifi_wan_dumps"
 DEFAULT_DUMP_KEEP: Final = 10
 MAX_DUMP_KEEP: Final = 100
+# A dump past this size is worth a warning rather than an info line: it is
+# mostly the site's device list, several are kept, and they sit in the
+# config directory that gets backed up.
+DUMP_SIZE_WARN_BYTES: Final = 20 * 1024 * 1024
 
 # How long any single request to the console may take. Home Assistant's
 # shared aiohttp session sets no timeout of its own, so without this the

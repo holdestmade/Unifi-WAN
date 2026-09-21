@@ -17,10 +17,12 @@ data or the parsing without a second round trip.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
-from dataclasses import asdict
+from copy import deepcopy
+from dataclasses import fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, DUMP_DIR_NAME
+from .const import DOMAIN, DUMP_DIR_NAME, DUMP_SIZE_WARN_BYTES
 from .models import UniFiWanData
 
 if TYPE_CHECKING:
@@ -119,6 +121,30 @@ def _write_and_prune(
     return len(text.encode("utf-8"))
 
 
+def _snapshot(data: UniFiWanData) -> dict[str, Any]:
+    """The parsed data as plain dicts, without the device list.
+
+    Not dataclasses.asdict: that deep-copies every field first and the
+    device list is the largest thing the integration holds - a site with
+    fifty access points is megabytes of dicts, copied on the event loop and
+    then thrown away, because the full list is already in the stat/device
+    capture verbatim. The gateway stays: it is the one device every sensor
+    reads, and having it isolated is worth the repetition.
+
+    The remaining fields are copied rather than referenced. They are small,
+    and the JSON is written in an executor thread while the event loop
+    keeps running - serialising the live objects would race the next poll
+    and the speedtest results the manager writes in place.
+    """
+    snapshot = {
+        field.name: deepcopy(getattr(data, field.name))
+        for field in fields(data)
+        if field.name != "devices"
+    }
+    snapshot["device_count"] = len(data.devices)
+    return snapshot
+
+
 async def _capture(runtime: UniFiWanRuntimeData) -> dict[str, Any]:
     """Fetch every endpoint the integration reads, verbatim.
 
@@ -127,15 +153,21 @@ async def _capture(runtime: UniFiWanRuntimeData) -> dict[str, Any]:
     coordinator has stopped asking for.
     """
     client = runtime.client
-    endpoints: dict[str, Any] = {}
-    for name, path, v2 in BASE_ENDPOINTS:
-        endpoints[name] = await client.fetch_raw(path, v2=v2)
+    names = [name for name, _, _ in BASE_ENDPOINTS]
+    requests = [client.fetch_raw(path, v2=v2) for _, path, v2 in BASE_ENDPOINTS]
 
     mac = runtime.dev_meta.get("mac")
     if mac:
         # The cheap gateway-only endpoint behind the live rate sensors.
-        endpoints["stat_device_gateway"] = await client.fetch_raw(f"stat/device/{mac}")
-    else:
+        names.append("stat_device_gateway")
+        requests.append(client.fetch_raw(f"stat/device/{mac}"))
+
+    # Independent endpoints, so they are asked together rather than in
+    # turn. fetch_raw reports its own failures instead of raising, so one
+    # endpoint being unreachable still leaves the others captured.
+    endpoints = dict(zip(names, await asyncio.gather(*requests), strict=True))
+
+    if not mac:
         endpoints["stat_device_gateway"] = {
             "skipped": "the gateway's MAC is not known, so there is no per-device URL to call"
         }
@@ -158,14 +190,7 @@ async def async_dump_entry(
     if data is None:
         parsed["error"] = "coordinator has no data"
     else:
-        parsed = asdict(data)
-        # Dropped, not redacted: the full list is already in the stat/device
-        # capture above, verbatim, and repeating it doubles the file size on
-        # a site with many APs. The gateway stays - it is the one device
-        # every sensor reads, and having it isolated is worth the repetition.
-        parsed.pop("devices", None)
-        parsed["device_count"] = len(data.devices)
-
+        parsed = _snapshot(data)
         active_wan, match_reason = data.active_wan
         derived = {
             "wan_numbers": runtime.wan_numbers,
@@ -185,8 +210,7 @@ async def async_dump_entry(
         # The fast poll parses only as far as the rate sensors read, so this
         # carries the uplink and little else by design. The endpoint's full
         # response is captured verbatim under controller.stat_device_gateway.
-        rates_parsed = asdict(rates.data)
-        rates_parsed.pop("devices", None)
+        rates_parsed = _snapshot(rates.data)
 
     entry = hass.config_entries.async_get_entry(entry_id)
     entry_config: dict[str, Any] = {}
@@ -230,7 +254,21 @@ async def async_dump_entry(
     size = await hass.async_add_executor_job(
         _write_and_prune, path, payload, prefix, keep
     )
-    _LOGGER.info("Wrote unredacted UniFi WAN dump to %s (%s bytes)", path, size)
+    if size >= DUMP_SIZE_WARN_BYTES:
+        # Worth saying out loud: the file is mostly the site's device list,
+        # it is kept alongside `keep` others, and it lives in the config
+        # directory that gets backed up.
+        _LOGGER.warning(
+            "The UniFi WAN dump at %s is %.1f MB. It holds every device on "
+            "site %r verbatim, and %s of them are kept. Lower the 'keep' "
+            "field, or delete the ones you have finished with.",
+            path,
+            size / (1024 * 1024),
+            runtime.site,
+            keep,
+        )
+    else:
+        _LOGGER.info("Wrote unredacted UniFi WAN dump to %s (%s bytes)", path, size)
     return {
         "path": str(path),
         "bytes": size,

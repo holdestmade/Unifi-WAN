@@ -270,7 +270,15 @@ Produces a JSON file containing what the controller sent and what the integratio
 - The per-WAN speedtest API's raw response, where the controller offers one
 - The integration's own conclusions: the resolved active WAN and how it was matched, the parsed per-WAN results, and the values the sensors are currently showing
 
-Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers, the speedtest server's location and URL and the geolocation lookup behind the **WAN ISP/ASN/City** sensors are redacted — both by an explicit list of field names and by shape, so that any field whose name ends in `_id`, `_uuid`, `_token`, `_key`, `_authkey`, `_hash`, `_mac`, `_ip`, `_secret`, `_password` or `_fingerprint` is redacted even if a firmware update introduced it and nobody has seen it before. Redaction replaces values, not keys, and leaves nulls alone, so a diagnostics file still shows *whether* the controller populated each of those fields.
+Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers, the speedtest server's location and URL and the geolocation lookup behind the **WAN ISP/ASN/City** sensors are redacted. Three rules apply, in order:
+
+1. **By field name** — an explicit list of the keys that carry them.
+2. **By name shape** — any field whose name ends in `_id`, `_uuid`, `_token`, `_key`, `_authkey`, `_hash`, `_mac`, `_ip`, `_secret`, `_password` or `_fingerprint`.
+3. **By value shape** — any value that *is* an IPv4 or IPv6 address, a MAC address, an email address or a long opaque hex identifier, whatever field it arrived in.
+
+The third rule is the one that does not go stale. The controller gains fields with every firmware, so a list of names is always a release behind, and a field only turns out to be missing from it after someone has posted their diagnostics publicly. A new field carrying an address is redacted on sight, before anyone knows its name.
+
+Fields the WAN logic turns on are deliberately kept: interface names, port numbers, up/enable flags, speedtest figures, timestamps, the WAN network group and the country name. Firmware versions are exempt from the value-shape rule, since `6.5.55.0` reads as a dotted quad but is exactly what a bug report needs. Redaction replaces values, not keys, and leaves nulls and blanks alone, so a diagnostics file still shows *whether* the controller populated each field.
 
 Because addresses are hidden, whether two of them matched is reported in the `derived` section rather than left to be inferred. **Please attach this file when opening an issue.**
 
@@ -285,6 +293,8 @@ For looking at your own data, redaction is only in the way — the hidden fields
 **Developer tools → Actions → UniFi WAN: Dump raw data → Perform action**
 
 Files are written to `config/unifi_wan_dumps/`, one per configured gateway, named `unifi_wan_<site>_<entry>_<YYYYmmdd-HHMMSS>.json`. The ten most recent per gateway are kept and older ones deleted; the `keep` field changes that. The action returns the paths it wrote, so the response pane in Developer tools tells you exactly where to look. Copy them off the host with the File editor / Samba / SSH add-on, or with `scp`.
+
+The endpoints are fetched together rather than in turn, and the file is serialised on a worker thread, so a dump does not hold up polling. On a large site the file is mostly the device list; past 20 MB the log says so, names the file and reminds you how many are being kept, since these live in the config directory that gets backed up.
 
 Each file contains:
 

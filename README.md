@@ -4,7 +4,7 @@
 
 Home Assistant custom component
 
-Pull WAN metrics from a UniFi OS console
+Pull WAN metrics from a UniFi OS console.
 (UDM / UDR / UXG (with a separate cloud key) / UGW / EFG / UCG-Ultra etc.)
 
 

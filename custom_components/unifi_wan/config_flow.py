@@ -1,6 +1,7 @@
+"""Config, options and reconfigure flows."""
+
 from __future__ import annotations
 
-import asyncio
 import logging
 import ssl
 from collections.abc import Mapping
@@ -8,38 +9,59 @@ from typing import Any
 
 import aiohttp
 import voluptuous as vol
-
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
-    DOMAIN,
-    REQUEST_TIMEOUT_SECONDS,
-    CONF_HOST,
     CONF_API_KEY,
-    CONF_SITE,
-    CONF_VERIFY_SSL,
-    CONF_SCAN_INTERVAL,
-    CONF_RATE_INTERVAL,
     CONF_AUTO_SPEEDTEST,
     CONF_AUTO_SPEEDTEST_MINUTES,
-    DEFAULT_SITE,
-    DEFAULT_VERIFY_SSL,
-    DEFAULT_SCAN_INTERVAL,
-    DEFAULT_RATE_INTERVAL,
+    CONF_HOST,
+    CONF_RATE_INTERVAL,
+    CONF_SCAN_INTERVAL,
+    CONF_SITE,
+    CONF_VERIFY_SSL,
     DEFAULT_AUTO_SPEEDTEST,
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
+    DEFAULT_RATE_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SITE,
+    DEFAULT_VERIFY_SSL,
+    DOMAIN,
+    MAX_AUTO_SPEEDTEST_MINUTES,
+    MAX_RATE_INTERVAL,
+    MAX_SCAN_INTERVAL,
+    MIN_AUTO_SPEEDTEST_MINUTES,
+    MIN_RATE_INTERVAL,
+    MIN_SCAN_INTERVAL,
+    REQUEST_TIMEOUT_SECONDS,
 )
-from . import merged_option
 
 _LOGGER = logging.getLogger(__name__)
 
 API_KEY_SELECTOR = selector.selector({"text": {"type": "password"}})
 
 VALIDATE_TIMEOUT = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+
+
+def _number(minimum: int, maximum: int) -> Any:
+    """A bounded whole-number field.
+
+    The bounds are the ones setup enforces anyway, shown in the dialog so a
+    rejected value is explained where it is typed rather than silently
+    clamped afterwards.
+    """
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=minimum,
+            max=maximum,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+        )
+    )
 
 
 class ValidationError(Exception):
@@ -84,6 +106,11 @@ def _clean_host(host: str) -> str:
     return host.split("/", 1)[0]
 
 
+def _unique_id(host: str, site: str) -> str:
+    """One configured console and site, however its address was typed."""
+    return f"{_clean_host(host)}-{(site or DEFAULT_SITE).strip()}"
+
+
 async def _async_validate(
     hass: HomeAssistant, host: str, api_key: str, site: str, verify_ssl: bool
 ) -> None:
@@ -95,9 +122,7 @@ async def _async_validate(
     url = f"https://{host}/proxy/network/api/s/{site}/stat/device"
     headers = {"X-API-Key": api_key}
     try:
-        async with session.get(
-            url, headers=headers, timeout=VALIDATE_TIMEOUT
-        ) as resp:
+        async with session.get(url, headers=headers, timeout=VALIDATE_TIMEOUT) as resp:
             if resp.status in (401, 403):
                 raise InvalidAuth(f"HTTP {resp.status}")
             if resp.status == 404:
@@ -110,7 +135,7 @@ async def _async_validate(
         raise
     except (aiohttp.ClientSSLError, ssl.SSLError) as e:
         raise SSLCertError(str(e)) from e
-    except (asyncio.TimeoutError, TimeoutError) as e:
+    except TimeoutError as e:
         raise Timeout(
             f"No response from {host} within {REQUEST_TIMEOUT_SECONDS}s"
         ) from e
@@ -118,6 +143,31 @@ async def _async_validate(
         raise CannotConnect(str(e)) from e
     if not isinstance(js, dict) or "data" not in js:
         raise CannotConnect("Unexpected response shape")
+
+
+def _connection_schema(defaults: Mapping[str, Any]) -> vol.Schema:
+    """The connection fields, shared by the user and reconfigure steps."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+            vol.Required(CONF_API_KEY): API_KEY_SELECTOR,
+            vol.Optional(CONF_SITE, default=defaults.get(CONF_SITE, DEFAULT_SITE)): str,
+            vol.Optional(
+                CONF_VERIFY_SSL,
+                default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+            ): bool,
+            vol.Optional(
+                CONF_AUTO_SPEEDTEST,
+                default=defaults.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST),
+            ): bool,
+            vol.Optional(
+                CONF_AUTO_SPEEDTEST_MINUTES,
+                default=defaults.get(
+                    CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES
+                ),
+            ): _number(MIN_AUTO_SPEEDTEST_MINUTES, MAX_AUTO_SPEEDTEST_MINUTES),
+        }
+    )
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -135,7 +185,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             auto_enable = user_input.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST)
             auto_minutes = max(
-                1,
+                MIN_AUTO_SPEEDTEST_MINUTES,
                 int(
                     user_input.get(
                         CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES
@@ -149,8 +199,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.warning("Validation failed (%s): %s", e.error_key, e)
                 errors["base"] = e.error_key
             else:
-                unique_id = f"{host}-{(site or DEFAULT_SITE).strip()}"
-                await self.async_set_unique_id(unique_id)
+                await self.async_set_unique_id(_unique_id(host, site))
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=f"UniFi WAN ({host})",
@@ -164,27 +213,64 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
 
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_HOST): str,
-                vol.Required(CONF_API_KEY): API_KEY_SELECTOR,
-                vol.Optional(CONF_SITE, default=DEFAULT_SITE): str,
-                vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): bool,
-                vol.Optional(CONF_AUTO_SPEEDTEST, default=DEFAULT_AUTO_SPEEDTEST): bool,
-                vol.Optional(
-                    CONF_AUTO_SPEEDTEST_MINUTES,
-                    default=DEFAULT_AUTO_SPEEDTEST_MINUTES,
-                ): int,
-            }
-        )
         return self.async_show_form(
-            step_id="user", data_schema=data_schema, errors=errors
+            step_id="user",
+            data_schema=_connection_schema(user_input or {}),
+            errors=errors,
         )
 
-    async def async_step_import(
+    async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        return await self.async_step_user(user_input)
+        """Change where an existing entry points, keeping its entities.
+
+        The options dialog can change these too, but only this step can
+        move the entry's unique id with them, which is what stops a console
+        that has been re-addressed from being configurable twice.
+        """
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = _clean_host(user_input[CONF_HOST])
+            site = user_input.get(CONF_SITE, DEFAULT_SITE)
+            api_key = user_input[CONF_API_KEY]
+            verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+            try:
+                await _async_validate(self.hass, host, api_key, site, verify_ssl)
+            except ValidationError as e:
+                _LOGGER.warning(
+                    "Reconfigure validation failed (%s): %s", e.error_key, e
+                )
+                errors["base"] = e.error_key
+            else:
+                await self.async_set_unique_id(_unique_id(host, site))
+                self._abort_if_unique_id_mismatch(reason="wrong_console")
+                # Written to data and cleared from options, so the merged
+                # view cannot keep serving the address this replaces.
+                options = {
+                    key: value
+                    for key, value in entry.options.items()
+                    if key not in (CONF_HOST, CONF_SITE, CONF_API_KEY, CONF_VERIFY_SSL)
+                }
+                return self.async_update_reload_and_abort(
+                    entry,
+                    title=f"UniFi WAN ({host})",
+                    data_updates={
+                        CONF_HOST: host,
+                        CONF_SITE: site,
+                        CONF_API_KEY: api_key,
+                        CONF_VERIFY_SSL: verify_ssl,
+                    },
+                    options=options,
+                )
+
+        current = {**entry.data, **entry.options}
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_connection_schema(user_input or current),
+            errors=errors,
+        )
 
     async def async_step_reauth(
         self, entry_data: Mapping[str, Any]
@@ -230,14 +316,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     @staticmethod
-    def async_get_options_flow(entry):
+    @callback
+    def async_get_options_flow(entry: ConfigEntry) -> OptionsFlowHandler:
         return OptionsFlowHandler()
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
     def _opt(self, key: str, default: Any = None) -> Any:
         """Current effective value: options first, then data, then default."""
-        return merged_option(self.config_entry, key, default)
+        entry = self.config_entry
+        return entry.options.get(key, entry.data.get(key, default))
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -253,16 +341,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_VERIFY_SSL, self._opt(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             )
             scan_interval = max(
-                5, int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+                MIN_SCAN_INTERVAL,
+                int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
             )
-            rate_interval = max(
-                0, int(user_input.get(CONF_RATE_INTERVAL, DEFAULT_RATE_INTERVAL))
+            rate_interval = int(
+                user_input.get(CONF_RATE_INTERVAL, DEFAULT_RATE_INTERVAL)
             )
+            if rate_interval > 0:
+                rate_interval = max(MIN_RATE_INTERVAL, rate_interval)
             auto_enable = user_input.get(
-                CONF_AUTO_SPEEDTEST, self._opt(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST)
+                CONF_AUTO_SPEEDTEST,
+                self._opt(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST),
             )
             auto_minutes = max(
-                1,
+                MIN_AUTO_SPEEDTEST_MINUTES,
                 int(
                     user_input.get(
                         CONF_AUTO_SPEEDTEST_MINUTES,
@@ -290,6 +382,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.warning("Options validation failed (%s): %s", e.error_key, e)
                 errors["base"] = e.error_key
 
+            if not errors and (error := self._async_move_entry(host, site)):
+                errors["base"] = error
+
             if not errors:
                 return self.async_create_entry(title="", data=new_options)
 
@@ -300,6 +395,27 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             )
 
         return self.async_show_form(step_id="init", data_schema=self._schema())
+
+    @callback
+    def _async_move_entry(self, host: str, site: str) -> str | None:
+        """Follow a host or site change with the entry's identity.
+
+        The unique id and the title are both derived from these, so leaving
+        them behind lets the same console be added a second time and leaves
+        the entry named after an address it no longer uses. Returns an
+        error key when another entry already holds the new identity.
+        """
+        entry = self.config_entry
+        unique_id = _unique_id(host, site)
+        if unique_id == entry.unique_id:
+            return None
+        for other in self.hass.config_entries.async_entries(DOMAIN):
+            if other.entry_id != entry.entry_id and other.unique_id == unique_id:
+                return "already_configured"
+        self.hass.config_entries.async_update_entry(
+            entry, unique_id=unique_id, title=f"UniFi WAN ({host})"
+        )
+        return None
 
     def _schema(self, overrides: dict[str, Any] | None = None) -> vol.Schema:
         o = overrides or {}
@@ -316,18 +432,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_VERIFY_SSL, default=d(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
                 ): bool,
                 vol.Optional(
-                    CONF_SCAN_INTERVAL, default=d(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-                ): int,
+                    CONF_SCAN_INTERVAL,
+                    default=d(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): _number(MIN_SCAN_INTERVAL, MAX_SCAN_INTERVAL),
                 vol.Optional(
-                    CONF_RATE_INTERVAL, default=d(CONF_RATE_INTERVAL, DEFAULT_RATE_INTERVAL)
-                ): int,
+                    CONF_RATE_INTERVAL,
+                    default=d(CONF_RATE_INTERVAL, DEFAULT_RATE_INTERVAL),
+                ): _number(0, MAX_RATE_INTERVAL),
                 vol.Optional(
                     CONF_AUTO_SPEEDTEST,
                     default=d(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST),
                 ): bool,
                 vol.Optional(
                     CONF_AUTO_SPEEDTEST_MINUTES,
-                    default=d(CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES),
-                ): int,
+                    default=d(
+                        CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES
+                    ),
+                ): _number(MIN_AUTO_SPEEDTEST_MINUTES, MAX_AUTO_SPEEDTEST_MINUTES),
             }
         )

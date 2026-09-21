@@ -1,0 +1,15 @@
+target-version = "py313"
+line-length = 88
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RET", "PTH"]
+ignore = [
+    # The integration's docstrings and comments explain intent at length,
+    # which is the house style here; line length is enforced on code alone.
+    "E501",
+]
+
+[lint.per-file-ignores]
+# Tests name their fixtures as arguments and assert on private state by
+# design, and the payload builders take many keyword arguments.
+"tests/*" = ["B008", "RET504"]

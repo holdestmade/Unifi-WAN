@@ -1,28 +1,33 @@
+"""Connectivity and speedtest-progress binary sensors."""
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
-from . import UniFiWanData, UniFiWanRuntimeData
+from .models import UniFiWanData
+from .runtime import UniFiWanConfigEntry
+from .speedtest import SpeedtestManager
+
 
 @dataclass(frozen=True, kw_only=True)
 class UniFiBinaryEntityDescription(BinarySensorEntityDescription):
     value_fn: Callable[[UniFiWanData], bool] = lambda x: False
 
 
-def _wan_has_internet(d: UniFiWanData, wan_number: int) -> bool:
+def wan_has_internet(d: UniFiWanData, wan_number: int) -> bool:
     """Whether one WAN both has a physical link and is reported alive.
 
     The controller's last_wan_interfaces "alive" flag can stay stale for a
@@ -41,7 +46,7 @@ def _wan_has_internet(d: UniFiWanData, wan_number: int) -> bool:
     return bool(section.get("ip"))
 
 
-def _any_wan_has_internet(d: UniFiWanData) -> bool:
+def any_wan_has_internet(d: UniFiWanData) -> bool:
     """Gateway-wide connectivity: any WAN that is both linked and alive.
 
     Held to exactly the rule the per-WAN sensors use, so this can never
@@ -50,7 +55,7 @@ def _any_wan_has_internet(d: UniFiWanData) -> bool:
     sections at all.
     """
     if d.wan:
-        return any(_wan_has_internet(d, wan_number) for wan_number in d.wan)
+        return any(wan_has_internet(d, wan_number) for wan_number in d.wan)
     return bool(d.uplink.get("up"))
 
 
@@ -59,7 +64,7 @@ BINARY_SENSORS: tuple[UniFiBinaryEntityDescription, ...] = (
         key="wan_internet",
         name="UniFi WAN Internet",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=_any_wan_has_internet,
+        value_fn=any_wan_has_internet,
     ),
     UniFiBinaryEntityDescription(
         key="active_wan_up",
@@ -69,30 +74,34 @@ BINARY_SENSORS: tuple[UniFiBinaryEntityDescription, ...] = (
     ),
 )
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    runtime: UniFiWanRuntimeData = hass.data[DOMAIN][entry.entry_id]
-    device = runtime.device_coordinator
 
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: UniFiWanConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    runtime = entry.runtime_data
+    device = runtime.device_coordinator
     entry_id = entry.entry_id
     device_info = runtime.device_info
-    wan_numbers = runtime.wan_numbers
 
-    entities = []
-    for desc in BINARY_SENSORS:
-        entities.append(UniFiGenericBinary(device, entry_id, device_info, desc))
+    entities: list[BinarySensorEntity] = [
+        UniFiGenericBinary(device, entry_id, device_info, desc)
+        for desc in BINARY_SENSORS
+    ]
 
     # Per-WAN binary sensors are only created on a multi-WAN gateway; with a
     # single WAN they restate the gateway-wide Internet / Active WAN Up
     # sensors above.
-    if len(wan_numbers) > 1:
-        for wan_number in wan_numbers:
-            # Shares _wan_has_internet with the gateway-wide sensor above,
-            # so the two cannot disagree about whether anything is connected.
+    if len(runtime.wan_numbers) > 1:
+        for wan_number in runtime.wan_numbers:
+            # Shares wan_has_internet with the gateway-wide sensor above, so
+            # the two cannot disagree about whether anything is connected.
             internet = UniFiBinaryEntityDescription(
                 key=f"wan{wan_number}_internet",
                 name=f"UniFi WAN{wan_number} Internet",
                 device_class=BinarySensorDeviceClass.CONNECTIVITY,
-                value_fn=lambda d, wn=wan_number: _wan_has_internet(d, wn),
+                value_fn=lambda d, wn=wan_number: wan_has_internet(d, wn),
             )
             entities.append(UniFiGenericBinary(device, entry_id, device_info, internet))
             link = UniFiBinaryEntityDescription(
@@ -103,14 +112,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             )
             entities.append(UniFiGenericBinary(device, entry_id, device_info, link))
 
-    entities.append(UniFiSpeedtestInProgress(runtime, entry_id, device_info))
+    entities.append(UniFiSpeedtestInProgress(runtime.speedtest, entry_id, device_info))
     async_add_entities(entities)
 
 
 class UniFiGenericBinary(CoordinatorEntity, BinarySensorEntity):
     entity_description: UniFiBinaryEntityDescription
 
-    def __init__(self, coordinator, entry_id: str, device_info: dict[str, Any], description):
+    def __init__(
+        self,
+        coordinator,
+        entry_id: str,
+        device_info: DeviceInfo,
+        description: UniFiBinaryEntityDescription,
+    ) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info
@@ -128,15 +143,18 @@ class UniFiSpeedtestInProgress(BinarySensorEntity):
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, runtime: UniFiWanRuntimeData, entry_id: str, device_info: dict[str, Any]):
-        self._runtime = runtime
+    def __init__(
+        self, speedtest: SpeedtestManager, entry_id: str, device_info: DeviceInfo
+    ) -> None:
+        self._speedtest = speedtest
         self._attr_unique_id = f"{entry_id}_speedtest_in_progress"
         self._attr_device_info = device_info
 
     async def async_added_to_hass(self) -> None:
-        signal = self._runtime.speedtest_running_signal
         self.async_on_remove(
-            async_dispatcher_connect(self.hass, signal, self._signal_update)
+            async_dispatcher_connect(
+                self.hass, self._speedtest.running_signal, self._signal_update
+            )
         )
 
     @callback
@@ -145,4 +163,4 @@ class UniFiSpeedtestInProgress(BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        return bool(self._runtime.get_speedtest_running())
+        return self._speedtest.running

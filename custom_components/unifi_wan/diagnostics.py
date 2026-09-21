@@ -5,17 +5,18 @@ what the controller actually sent, alongside what the integration made of
 it. Nearly every issue raised against this integration has come down to
 that comparison, and this needs no logger configuration to produce.
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, Final
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN
-from . import UniFiWanData, UniFiWanRuntimeData, resolve_active_wan
+from .models import UniFiWanData
+from .runtime import UniFiWanConfigEntry
 
 # Matches the marker Home Assistant's own diagnostics helper renders.
 REDACTED: Final = "**REDACTED**"
@@ -181,10 +182,10 @@ def _device_summary(devices: list[dict], gateway: dict[str, Any] | None) -> list
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: UniFiWanConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    runtime: UniFiWanRuntimeData = hass.data[DOMAIN][entry.entry_id]
+    runtime = entry.runtime_data
     data: UniFiWanData | None = runtime.device_coordinator.data
 
     try:
@@ -209,30 +210,33 @@ async def async_get_config_entry_diagnostics(
         diagnostics["error"] = "coordinator has no data"
         return diagnostics
 
-    active_wan, match_reason = resolve_active_wan(data)
+    active_wan, match_reason = data.active_wan
     # Redacted like everything else: nothing here carries an address today,
     # but a field added later should not leak by having been overlooked.
-    diagnostics["derived"] = _redact({
-        # What the integration concluded, so a wrong conclusion can be told
-        # apart from wrong data.
-        "wan_numbers": runtime.wan_numbers,
-        "active_wan": active_wan,
-        "match_reason": match_reason,
-        "wan_alive": data.wan_alive,
-        "wan_status": data.wan_status,
-        "speedtest": data.speedtest,
-        "per_wan_speedtest": data.per_wan_speedtest,
-        # What the ISP sensors read: the gateway's geo_info blocks merged
-        # down to one record per WAN. Shows at a glance which WANs the
-        # gateway looked up and which fields it filled in.
-        "geo_info": data.geo_info,
-        # What the sensors are actually showing, which can lag the above.
-        "latched_speedtest_results": runtime.speedtest_results,
-        "per_wan_api_available": data.speedtest_history_raw is not None,
-        "targeted_speedtest_supported": runtime.client.targeted_speedtest_supported,
-        "auto_speedtest_enabled": runtime.auto_enabled,
-        "speedtest_running": runtime.get_speedtest_running(),
-    })
+    diagnostics["derived"] = _redact(
+        {
+            # What the integration concluded, so a wrong conclusion can be told
+            # apart from wrong data.
+            "wan_numbers": runtime.wan_numbers,
+            "active_wan": active_wan,
+            "match_reason": match_reason,
+            "wan_alive": data.wan_alive,
+            "wan_status": data.wan_status,
+            "speedtest": data.speedtest,
+            "per_wan_speedtest": data.per_wan_speedtest,
+            # What the ISP sensors read: the gateway's geo_info blocks merged
+            # down to one record per WAN. Shows at a glance which WANs the
+            # gateway looked up and which fields it filled in.
+            "geo_info": data.geo_info,
+            # What the sensors are actually showing, which can lag the above.
+            "latched_speedtest_results": runtime.speedtest.results,
+            "per_wan_api_available": data.speedtest_history_raw is not None,
+            "targeted_speedtest_supported": runtime.client.targeted_speedtest_supported,
+            "per_wan_speedtest_honoured": runtime.speedtest.per_wan_supported,
+            "auto_speedtest_enabled": runtime.speedtest.auto_enabled,
+            "speedtest_running": runtime.speedtest.running,
+        }
+    )
     diagnostics["controller"] = {
         # The gateway verbatim: WAN sections, uplink, speedtest-status,
         # port_table and everything else it reports.

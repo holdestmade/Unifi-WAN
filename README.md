@@ -1,7 +1,19 @@
+[![AI Assisted](https://img.shields.io/badge/AI--assisted-Claude-8A2BE2?logo=anthropic&logoColor=white)](#ai-disclosure)
+
 # UniFi WAN
+
 Home Assistant custom component
 
-Pull WAN metrics from a UniFi OS console (UDM / UDR / UXG (with a separate cloud key) / UGW / EFG / UCG-Ultra etc.)
+Pull WAN metrics from a UniFi OS console
+(UDM / UDR / UXG (with a separate cloud key) / UGW / EFG / UCG-Ultra etc.)
+
+
+## AI Disclosure
+
+This integration was developed with substantial assistance from AI (Anthropic's Claude).
+Code was generated and iterated on through AI conversations, then reviewed, tested
+and maintained by me on my own Home Assistant installation (HA 2026.x).
+
 
 ## Features
 

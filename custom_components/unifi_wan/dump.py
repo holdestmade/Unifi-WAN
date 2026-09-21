@@ -45,10 +45,12 @@ WITHHELD: str = "**WITHHELD (not controller data)**"
 WARNING: str = (
     "UNREDACTED. This file contains the controller's payloads exactly as "
     "received: public IP addresses, MAC addresses, serial numbers, site and "
-    "device identifiers, DNS servers and the ISP/geolocation lookup for each "
-    "WAN. It is for your own inspection - do not attach it to a GitHub issue "
-    "or post it publicly. Use Download diagnostics for that, which redacts "
-    "all of the above."
+    "device identifiers, DNS servers, the ISP/geolocation lookup for each "
+    "WAN, and the site's forwarding rules - which internal host and port "
+    "each one opens from outside. It is for your own inspection - do not "
+    "attach it to a GitHub issue or post it publicly. Use Download "
+    "diagnostics for that, which redacts the rest and carries no forwarding "
+    "rules at all."
 )
 
 # Endpoints captured, as (name in the dump, path, use the v2 API). The
@@ -61,6 +63,14 @@ BASE_ENDPOINTS: tuple[tuple[str, str, bool], ...] = (
     # here even when it 404s: the status code is the answer to "why are my
     # per-WAN speedtest sensors empty?".
     ("v2_speedtest", "speedtest", True),
+    # The site's forwarding rules. Nothing in the integration reads these
+    # yet; they are captured because the questions behind doing so are all
+    # answered by one real response. Whether a local API key may read them
+    # at all is the status code, and what a rule's "pfwd_interface" holds -
+    # which WAN an inbound rule is bound to, and how that firmware spells
+    # "either one" - is the body. Both differ by console, and neither can
+    # be settled by reasoning about it.
+    ("port_forwards", "rest/portforward", False),
 )
 
 

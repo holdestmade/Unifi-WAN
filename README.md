@@ -350,3 +350,10 @@ and pull request.
    - SSL verification preference
 
 Once added, you’ll get a single UniFi WAN device with all the WAN, speedtest, and usage sensors attached.
+
+---
+
+## Licence
+
+[MIT](LICENSE).
+

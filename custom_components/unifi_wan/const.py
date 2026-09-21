@@ -49,6 +49,25 @@ DUMP_DIR_NAME: Final = "unifi_wan_dumps"
 DEFAULT_DUMP_KEEP: Final = 10
 MAX_DUMP_KEEP: Final = 100
 
+# How long any single request to the console may take. Home Assistant's
+# shared aiohttp session sets no timeout of its own, so without this the
+# library default of five minutes applies and a console that accepts the
+# connection but never answers stalls a poll for that long.
+REQUEST_TIMEOUT_SECONDS: Final = 30
+
+# Statuses that mean "this console does not offer that endpoint", as
+# opposed to a request that simply failed. Only these are evidence worth
+# remembering for the rest of the session; anything else (a refused
+# connection, a 5xx, a rate limit) says nothing about what the console
+# supports and must not disable a feature permanently.
+UNSUPPORTED_STATUSES: Final[frozenset[int]] = frozenset({400, 401, 403, 404, 405})
+
+# The same question for the per-WAN speedtest history, which is answered
+# more strictly: 404/405 are the console saying the endpoint is not there,
+# while 400/401/403 can equally be a key whose permissions changed, which a
+# re-authentication fixes without a restart.
+HISTORY_UNSUPPORTED_STATUSES: Final[frozenset[int]] = frozenset({404, 405})
+
 # How long to wait for a triggered speedtest to finish, and how often to
 # poll the controller for its result while waiting.
 SPEEDTEST_TIMEOUT_SECONDS: Final = 300

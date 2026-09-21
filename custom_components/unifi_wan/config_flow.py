@@ -17,6 +17,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     DOMAIN,
+    REQUEST_TIMEOUT_SECONDS,
     CONF_HOST,
     CONF_API_KEY,
     CONF_SITE,
@@ -38,7 +39,7 @@ _LOGGER = logging.getLogger(__name__)
 
 API_KEY_SELECTOR = selector.selector({"text": {"type": "password"}})
 
-VALIDATE_TIMEOUT = aiohttp.ClientTimeout(total=30)
+VALIDATE_TIMEOUT = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
 
 
 class ValidationError(Exception):
@@ -110,7 +111,9 @@ async def _async_validate(
     except (aiohttp.ClientSSLError, ssl.SSLError) as e:
         raise SSLCertError(str(e)) from e
     except (asyncio.TimeoutError, TimeoutError) as e:
-        raise Timeout(f"No response from {host} within 30s") from e
+        raise Timeout(
+            f"No response from {host} within {REQUEST_TIMEOUT_SECONDS}s"
+        ) from e
     except Exception as e:
         raise CannotConnect(str(e)) from e
     if not isinstance(js, dict) or "data" not in js:

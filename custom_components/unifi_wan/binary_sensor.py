@@ -21,12 +21,45 @@ from . import UniFiWanData, UniFiWanRuntimeData
 class UniFiBinaryEntityDescription(BinarySensorEntityDescription):
     value_fn: Callable[[UniFiWanData], bool] = lambda x: False
 
+
+def _wan_has_internet(d: UniFiWanData, wan_number: int) -> bool:
+    """Whether one WAN both has a physical link and is reported alive.
+
+    The controller's last_wan_interfaces "alive" flag can stay stale for a
+    WAN whose cable is unplugged, so a WAN it reports as down is never
+    treated as connected however alive it claims to be. Where the
+    controller reports no link state for the WAN at all there is nothing
+    to cross-check against, and its own flag - or failing that, whether it
+    holds an address - is all the evidence there is.
+    """
+    section = d.wan.get(wan_number) or {}
+    if "up" in section and not section.get("up"):
+        return False
+    alive = d.wan_alive.get(wan_number)
+    if alive is not None:
+        return bool(alive)
+    return bool(section.get("ip"))
+
+
+def _any_wan_has_internet(d: UniFiWanData) -> bool:
+    """Gateway-wide connectivity: any WAN that is both linked and alive.
+
+    Held to exactly the rule the per-WAN sensors use, so this can never
+    report a connection while every one of them reads disconnected. The
+    uplink's own flag is the fallback for a gateway that reports no WAN
+    sections at all.
+    """
+    if d.wan:
+        return any(_wan_has_internet(d, wan_number) for wan_number in d.wan)
+    return bool(d.uplink.get("up"))
+
+
 BINARY_SENSORS: tuple[UniFiBinaryEntityDescription, ...] = (
     UniFiBinaryEntityDescription(
         key="wan_internet",
         name="UniFi WAN Internet",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=lambda d: any(d.wan_alive.values()) if d.wan_alive else bool(d.uplink.get("up")),
+        value_fn=_any_wan_has_internet,
     ),
     UniFiBinaryEntityDescription(
         key="active_wan_up",
@@ -53,14 +86,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # sensors above.
     if len(wan_numbers) > 1:
         for wan_number in wan_numbers:
-            # The controller's last_wan_interfaces "alive" flag can stay stale for a
-            # WAN whose cable is unplugged, so a WAN with no physical link is never
-            # treated as having internet regardless of the reported alive state.
+            # Shares _wan_has_internet with the gateway-wide sensor above,
+            # so the two cannot disagree about whether anything is connected.
             internet = UniFiBinaryEntityDescription(
                 key=f"wan{wan_number}_internet",
                 name=f"UniFi WAN{wan_number} Internet",
                 device_class=BinarySensorDeviceClass.CONNECTIVITY,
-                value_fn=lambda d, wn=wan_number: bool(d.wan.get(wn, {}).get("up")) and d.wan_alive.get(wn, bool(d.wan.get(wn, {}).get("ip"))),
+                value_fn=lambda d, wn=wan_number: _wan_has_internet(d, wn),
             )
             entities.append(UniFiGenericBinary(device, entry_id, device_info, internet))
             link = UniFiBinaryEntityDescription(

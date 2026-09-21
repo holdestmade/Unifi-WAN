@@ -62,9 +62,16 @@ from .const import (
     SPEEDTEST_TIMEOUT_SECONDS,
     SPEEDTEST_POLL_SECONDS,
     GATEWAY_RESULT_MATCH_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    UNSUPPORTED_STATUSES,
+    HISTORY_UNSUPPORTED_STATUSES,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Applied to every call to the console. Home Assistant's shared session has
+# no timeout of its own, so this replaces aiohttp's five-minute default.
+REQUEST_TIMEOUT: Final = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
 
 SERVICE_RUN_SPEEDTEST_SCHEMA = vol.Schema(
     {
@@ -153,6 +160,17 @@ class UnifiWanClient:
         # accepts one; False stops us retrying endpoints it has rejected.
         self.targeted_speedtest_supported: bool | None = None
 
+    @property
+    def speedtest_history_supported(self) -> bool:
+        """Whether the per-WAN speedtest API is still believed to exist.
+
+        False only once the controller has answered that the endpoint is
+        not there. It stays True while a fetch merely fails, which is what
+        lets the caller tell "this console has no per-WAN records" apart
+        from "that one request did not get through".
+        """
+        return not self._speedtest_history_unsupported
+
     def _url(self, path: str) -> str:
         return f"https://{self.host}/proxy/network/api/s/{self.site}/{path}"
 
@@ -163,7 +181,9 @@ class UnifiWanClient:
         url = self._url(path)
         headers = {"X-API-Key": self.api_key}
         try:
-            async with self._session.get(url, headers=headers) as resp:
+            async with self._session.get(
+                url, headers=headers, timeout=REQUEST_TIMEOUT
+            ) as resp:
                 if resp.status in (401, 403):
                     raise ConfigEntryAuthFailed(
                         f"Authentication failed (HTTP {resp.status})"
@@ -200,7 +220,9 @@ class UnifiWanClient:
         """
         headers = {"X-API-Key": self.api_key}
         try:
-            async with self._session.post(url, headers=headers, json=payload) as resp:
+            async with self._session.post(
+                url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT
+            ) as resp:
                 try:
                     body = await resp.json(content_type=None)
                 except (aiohttp.ContentTypeError, ValueError):
@@ -212,18 +234,25 @@ class UnifiWanClient:
             _LOGGER.error("POST failed: %s", e)
             return 0, None
 
-    async def post_json(self, path: str, payload: dict) -> dict:
+    async def post_json(self, path: str, payload: dict) -> bool:
+        """Send a command and report whether the controller took it.
+
+        The body itself carries nothing the caller needs - a speedtest is
+        reported through the gateway's own records, not in the reply - so
+        what comes back is the one thing worth acting on: whether there is
+        any point waiting for a result.
+        """
         status, body = await self._post(self._url(path), payload)
         if status != 200:
             _LOGGER.error("HTTP %s for %s", status, self._url(path))
-            return {"ok": False}
+            return False
         if (error := self._api_error(body)) is not None:
             # A 200 that says "no": worth surfacing, because the command
             # simply not happening is otherwise only visible as a result
             # that never arrives.
             _LOGGER.error("Controller refused %s: %s", path, error)
-            return {"ok": False}
-        return body if isinstance(body, dict) else {"ok": True}
+            return False
+        return True
 
     async def get_speedtest_history(self) -> dict | None:
         """Per-WAN speedtest records from the v2 API, or None if this
@@ -238,8 +267,10 @@ class UnifiWanClient:
         url = self._url_v2("speedtest")
         headers = {"X-API-Key": self.api_key}
         try:
-            async with self._session.get(url, headers=headers) as resp:
-                if resp.status in (400, 401, 403, 404, 405):
+            async with self._session.get(
+                url, headers=headers, timeout=REQUEST_TIMEOUT
+            ) as resp:
+                if resp.status in HISTORY_UNSUPPORTED_STATUSES:
                     self._speedtest_history_unsupported = True
                     _LOGGER.debug(
                         "Per-WAN speedtest API unavailable (HTTP %s for %s); "
@@ -249,6 +280,17 @@ class UnifiWanClient:
                     )
                     return None
                 if resp.status != 200:
+                    # Not remembered: a 401/403 is as likely to be a key whose
+                    # permissions changed as an endpoint that is not there, and
+                    # a 5xx is the console having a bad moment. Either way the
+                    # caller keeps the previous records rather than switching
+                    # to the guessier attribution route for one poll.
+                    _LOGGER.debug(
+                        "Per-WAN speedtest fetch returned HTTP %s for %s; "
+                        "keeping the records from the previous poll",
+                        resp.status,
+                        url,
+                    )
                     return None
                 body = await resp.json(content_type=None)
                 return body if isinstance(body, dict) else None
@@ -269,7 +311,9 @@ class UnifiWanClient:
         result: dict[str, Any] = {"url": url}
         headers = {"X-API-Key": self.api_key}
         try:
-            async with self._session.get(url, headers=headers) as resp:
+            async with self._session.get(
+                url, headers=headers, timeout=REQUEST_TIMEOUT
+            ) as resp:
                 result["status"] = resp.status
                 result["content_type"] = resp.headers.get("Content-Type")
                 try:
@@ -294,8 +338,13 @@ class UnifiWanClient:
         mac: str,
         wan_number: int | None = None,
         interface_name: str | None = None,
-    ) -> dict:
+    ) -> bool:
         """Trigger a speedtest, optionally against a specific WAN.
+
+        Returns whether the controller accepted the command, so a caller
+        that would otherwise sit through a five-minute timeout waiting for
+        a result can give up immediately when there was never going to be
+        one.
 
         A targeted run identifies the interface with "interface_name" (the
         WAN's own ifname, e.g. "eth7"). Firmware differs over which endpoint
@@ -318,6 +367,7 @@ class UnifiWanClient:
             (self._url_v2("speedtest"), {"interface_name": iface}),
         ]
         tried: list[str] = []
+        unreachable: str | None = None
         for url, payload in attempts:
             status, body = await self._post(url, payload)
             # A 200 carrying an error in the envelope is a refusal, not an
@@ -333,10 +383,29 @@ class UnifiWanClient:
             if status == 200 and error is None:
                 self.targeted_speedtest_supported = True
                 _LOGGER.debug("Speedtest for WAN%s accepted by %s", wan_number, url)
-                return body if isinstance(body, dict) else {"ok": True}
-            if error is None and status not in (400, 401, 403, 404, 405):
-                # A real failure rather than "this endpoint isn't the one".
+                return True
+            if error is None and status not in UNSUPPORTED_STATUSES:
+                # The request never got through, or the console erred. That
+                # is not the console telling us this endpoint is the wrong
+                # one, so it is not evidence to remember: disabling targeted
+                # speedtests here would turn one unreachable moment into a
+                # whole session of untargeted runs.
+                unreachable = f"HTTP {status}" if status else "the request failed"
                 break
+
+        if unreachable is not None:
+            _LOGGER.warning(
+                "Could not ask this controller for a per-WAN speedtest on WAN%s "
+                "(interface %r; %s; tried %s). Falling back to a whole-gateway "
+                "speedtest for this run only - the targeted form will be tried "
+                "again next time.",
+                wan_number,
+                iface,
+                unreachable,
+                ", ".join(tried),
+            )
+            return await self.post_json("cmd/devmgr", plain)
+
         self.targeted_speedtest_supported = False
         _LOGGER.warning(
             "This controller rejected every per-WAN speedtest request for WAN%s "
@@ -743,32 +812,57 @@ def _extract_wan_data(payload: dict[str, Any] | None) -> UniFiWanData:
         else:
             raw = (gateway.get(f"wan{wan_number}") or {}) if gateway else {}
         wan_entry = dict(raw)
-        # Normalise IPv6 into the canonical "ip6" key for uniform sensor access
-        if not wan_entry.get("ip6"):
-            ip6 = _get_ip6_from(wan_entry)
-            if ip6:
-                wan_entry["ip6"] = ip6
+        # Normalise IPv6 into the canonical "ip6" key for uniform sensor
+        # access. Whatever the controller put there is re-checked rather
+        # than taken as given: a gateway that reports a link-local address
+        # in "ip6" would otherwise have it shown as the WAN's IPv6, which
+        # is the one thing _is_routable_ipv6 exists to prevent. The raw
+        # payload is kept verbatim in diagnostics and dumps, so nothing is
+        # lost by dropping a value no sensor should display.
+        ip6 = _get_ip6_from(wan_entry)
+        if ip6:
+            wan_entry["ip6"] = ip6
+        elif stale := wan_entry.pop("ip6", None):
+            # Popped either way, so the controller's "nothing here" empty
+            # string does not reach a sensor; only a real address is worth
+            # a line in the log.
+            _LOGGER.debug(
+                "WAN%s reported IPv6 address %s, which is not routable; "
+                "leaving the IPv6 sensor unset",
+                wan_number,
+                stale,
+            )
         wan[wan_number] = wan_entry
 
-    # Supplement uplink IPv6 from WAN data or gateway-level fields if not directly present
-    if gateway and not uplink.get("ip6"):
-        ip6 = _get_ip6_from(uplink)
-        if not ip6:
-            # Try matching active WAN by IPv4 first, then fall back to any WAN with IPv6
-            active_ip = uplink.get("ip")
-            for wan_data in wan.values():
-                if not wan_data:
-                    continue
-                if active_ip and wan_data.get("ip") != active_ip:
-                    continue
-                ip6 = wan_data.get("ip6") or _get_ip6_from(wan_data)
-                if ip6:
-                    break
-        # Last resort: check gateway root-level IPv6 fields
-        if not ip6:
-            ip6 = _get_ip6_from(gateway)
-        if ip6:
-            uplink["ip6"] = ip6
+    # The uplink's own IPv6, held to the same standard as the WAN sections
+    # above: read through the routable filter rather than taken from the
+    # "ip6" key as it stands, then supplemented from the WAN sections and
+    # the gateway's root-level fields where the uplink carries none.
+    ip6 = _get_ip6_from(uplink)
+    if not ip6:
+        # The WAN section describing this same uplink, identified by its
+        # address. A WAN with a different address is a different line, and
+        # its IPv6 is not the uplink's to report.
+        active_ip = uplink.get("ip")
+        for wan_data in wan.values():
+            if not wan_data:
+                continue
+            if active_ip and wan_data.get("ip") != active_ip:
+                continue
+            ip6 = wan_data.get("ip6") or _get_ip6_from(wan_data)
+            if ip6:
+                break
+    # Last resort: check gateway root-level IPv6 fields
+    if not ip6 and gateway:
+        ip6 = _get_ip6_from(gateway)
+    if ip6:
+        uplink["ip6"] = ip6
+    elif stale := uplink.pop("ip6", None):
+        _LOGGER.debug(
+            "The uplink reported IPv6 address %s, which is not routable; "
+            "leaving the IPv6 sensor unset",
+            stale,
+        )
 
     wan_alive: dict[int, bool] = {}
     wan_status_map: dict[int, str] = {}
@@ -1033,14 +1127,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # per-WAN sensors show.
     speedtest_results: dict[int, dict[str, Any]] = {}
 
+    # The last per-WAN speedtest history this controller returned. A fetch
+    # that merely failed must not be mistaken for a controller that keeps
+    # no per-WAN records: that other route attributes the gateway's block
+    # to the active uplink without the cross-check this one applies, and
+    # the rule that a result never moves backwards would then defend the
+    # wrong record against the next correct one. Holding the previous
+    # response keeps the route stable until the controller answers again.
+    last_history: dict[str, Any] | None = None
+
     async def _update_devices() -> UniFiWanData:
         """Fetch and process data."""
+        nonlocal last_history
         raw = await client.get_devices()
         data = _extract_wan_data(raw)
         data.speedtest_latched = speedtest_results
         # Best effort: controllers that offer it report a result per WAN,
         # which beats inferring which WAN a global result belonged to.
         history = await client.get_speedtest_history()
+        if history is None and client.speedtest_history_supported:
+            # This fetch did not get through, but the endpoint is still
+            # there. Reuse what it last said rather than falling back to
+            # the guessier route for a single poll.
+            history = last_history
+        else:
+            last_history = history
         if history is not None:
             data.speedtest_history_raw = history
             data.per_wan_speedtest = parse_speedtest_history(history, data.wan)
@@ -1370,7 +1481,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             iface = None
             if target is not None:
                 iface = (gw_data.wan.get(target) or {}).get("ifname")
-            await client.run_speedtest(mac_local, target, iface)
+            if not await client.run_speedtest(mac_local, target, iface):
+                # Nothing was started, so there is no result coming. Waiting
+                # the full timeout here would report a command the console
+                # refused as one that simply never finished.
+                _LOGGER.warning(
+                    "The controller did not accept a speedtest for %s, so no "
+                    "result is expected; the error it gave is logged above.",
+                    f"WAN{target}" if target is not None else "the active WAN",
+                )
+                return
             moved = await _wait_for_result(before)
 
             if not moved and target is not None and client.targeted_speedtest_supported:
@@ -1391,7 +1511,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     SPEEDTEST_TIMEOUT_SECONDS,
                 )
                 before = _stamps(device_coordinator.data)
-                await client.run_speedtest(mac_local)
+                if not await client.run_speedtest(mac_local):
+                    _LOGGER.warning(
+                        "The controller did not accept the whole-gateway "
+                        "speedtest either, so no result is expected; the error "
+                        "it gave is logged above."
+                    )
+                    return
                 moved = await _wait_for_result(before)
 
             if not moved:

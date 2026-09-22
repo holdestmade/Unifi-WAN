@@ -24,11 +24,16 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import SPEEDTEST_SERVER_FIELDS
+from .const import (
+    SPEED_COMPARISON_OPTIONS,
+    SPEED_TOLERANCE,
+    SPEEDTEST_SERVER_FIELDS,
+)
 from .models import (
     UniFiWanData,
     gateway_result_wan,
     interface_to_wan_number,
+    speed_comparison,
     speedtest_epoch,
 )
 from .runtime import UniFiWanConfigEntry
@@ -383,6 +388,105 @@ _SERVER_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
 )
 
 
+# What the line is sold as, against what it actually delivered, as
+# (result field, label, icon). The expected figure is configuration - the
+# controller has no idea what a subscriber pays for - so these are built
+# at setup from the options rather than declared as constants.
+EXPECTED_SPEED_SENSORS: Final[tuple[tuple[str, str, str, str], ...]] = (
+    ("down", "Download", "mdi:download-outline", "mdi:speedometer"),
+    ("up", "Upload", "mdi:upload-outline", "mdi:speedometer"),
+)
+
+
+def _expected_speed_descriptions(
+    expected_download: float, expected_upload: float
+) -> tuple[UniFiSensorDescription, ...]:
+    """The configured line speeds, and how the last result compares.
+
+    Always created, even with nothing configured, so that filling the
+    option in later does not change which entities exist - it just gives
+    them something to say. Until then they report unknown, which is the
+    honest answer: the integration cannot know what a line was sold as.
+
+    The comparison reads the same result the gateway-wide Speedtest
+    sensors show, so the two can never disagree about what was measured.
+    """
+    expected = {"down": expected_download, "up": expected_upload}
+    descriptions: list[UniFiSensorDescription] = []
+
+    for field, label, expected_icon, comparison_icon in EXPECTED_SPEED_SENSORS:
+        target = expected[field]
+        descriptions.append(
+            UniFiSensorDescription(
+                key=f"isp_expected_{field}",
+                name=f"UniFi WAN ISP Expected {label} Speed",
+                icon=expected_icon,
+                device_class=SensorDeviceClass.DATA_RATE,
+                native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+                # No state class: this is a figure off a contract, not a
+                # measurement, and recording statistics for a constant
+                # would only fill the database.
+                value_fn=_expected_value_fn(target),
+            )
+        )
+        descriptions.append(
+            UniFiSensorDescription(
+                key=f"isp_{field}_vs_expected",
+                name=f"UniFi WAN ISP {label} Speed Status",
+                icon=comparison_icon,
+                device_class=SensorDeviceClass.ENUM,
+                options=list(SPEED_COMPARISON_OPTIONS),
+                value_fn=_comparison_value_fn(field, target),
+                attributes_fn=_comparison_attributes_fn(field, target),
+            )
+        )
+    return tuple(descriptions)
+
+
+def _expected_value_fn(expected: float) -> Callable[[UniFiWanData], Any]:
+    """Report the configured figure, or nothing when it is unset."""
+    return lambda _d: expected or None
+
+
+def _measured_speed(d: UniFiWanData, field: str) -> float | None:
+    """The result the gateway-wide Speedtest sensors are showing."""
+    try:
+        return float(_active_speedtest(d).get(field))
+    except (TypeError, ValueError):
+        return None
+
+
+def _comparison_value_fn(field: str, expected: float) -> Callable[[UniFiWanData], Any]:
+    """Compare the last result with the configured figure."""
+    return lambda d: speed_comparison(_measured_speed(d, field), expected)
+
+
+def _comparison_attributes_fn(
+    field: str, expected: float
+) -> Callable[[UniFiWanData], dict[str, Any] | None]:
+    """Show the arithmetic behind the state.
+
+    A one-word state invites "by how much?", and answering it here saves
+    a template that re-derives the same subtraction.
+    """
+
+    def attributes(d: UniFiWanData) -> dict[str, Any] | None:
+        measured = _measured_speed(d, field)
+        base: dict[str, Any] = {
+            "expected_mbps": expected or None,
+            "measured_mbps": measured,
+            "tolerance_percent": round(SPEED_TOLERANCE * 100, 3),
+        }
+        if measured is None or not expected:
+            return base
+        difference = measured - expected
+        base["difference_mbps"] = round(difference, 2)
+        base["difference_percent"] = round(difference / expected * 100, 1)
+        return base
+
+    return attributes
+
+
 def _wan_isp_value_fn(wan_number: int, field: str) -> Callable[[UniFiWanData], Any]:
     """Read one ISP field for a specific WAN, so a line is only ever
     labelled with its own operator.
@@ -637,7 +741,10 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
 
-    for desc in SENSORS:
+    expected_descriptions = _expected_speed_descriptions(
+        runtime.expected_download, runtime.expected_upload
+    )
+    for desc in (*SENSORS, *expected_descriptions):
         coord: DataUpdateCoordinator = (
             rates_coord if desc.use_rate_coordinator else device_coord
         )

@@ -62,7 +62,13 @@
           "scan_interval": "Scan Interval (seconds)",
           "rate_interval_seconds": "Rate Interval (seconds, 0 to disable)",
           "auto_speedtest": "Run Speedtest Automatically",
-          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)"
+          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)",
+          "expected_download_mbps": "ISP Expected Download Speed (Mbit/s, 0 to disable)",
+          "expected_upload_mbps": "ISP Expected Upload Speed (Mbit/s, 0 to disable)"
+        },
+        "data_description": {
+          "expected_download_mbps": "What your line is sold as. The ISP Download Speed Status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
+          "expected_upload_mbps": "What your line is sold as. The ISP Upload Speed Status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare."
         }
       }
     },

@@ -32,6 +32,8 @@ from .const import (
     CONF_API_KEY,
     CONF_AUTO_SPEEDTEST,
     CONF_AUTO_SPEEDTEST_MINUTES,
+    CONF_EXPECTED_DOWNLOAD,
+    CONF_EXPECTED_UPLOAD,
     CONF_HOST,
     CONF_RATE_INTERVAL,
     CONF_SCAN_INTERVAL,
@@ -40,6 +42,7 @@ from .const import (
     DEFAULT_AUTO_SPEEDTEST,
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
     DEFAULT_DUMP_KEEP,
+    DEFAULT_EXPECTED_SPEED,
     DEFAULT_RATE_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SITE,
@@ -54,6 +57,7 @@ from .const import (
     SERVICE_RUN_SPEEDTEST,
 )
 from .coordinator import UniFiWanCoordinator, UniFiWanRatesCoordinator
+from .models import expected_speed
 from .runtime import UniFiWanConfigEntry, UniFiWanRuntimeData
 from .speedtest import SpeedtestManager
 
@@ -93,6 +97,11 @@ RELOAD_OPTION_KEYS: Final = (
     CONF_SCAN_INTERVAL,
     CONF_RATE_INTERVAL,
     CONF_AUTO_SPEEDTEST_MINUTES,
+    # The comparison sensors read these once, at setup, so a change has to
+    # rebuild the entry. Cheaper than making every sensor consult the
+    # config entry on each state read for a figure that changes yearly.
+    CONF_EXPECTED_DOWNLOAD,
+    CONF_EXPECTED_UPLOAD,
 )
 
 
@@ -202,6 +211,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: UniFiWanConfigEntry) -> 
         merged_option(entry, CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST)
     )
 
+    # Normalised the same way the options dialog stores them, so a value
+    # written by an older release or edited by hand is read identically.
+    expected_download = expected_speed(
+        merged_option(entry, CONF_EXPECTED_DOWNLOAD, DEFAULT_EXPECTED_SPEED)
+    )
+    expected_upload = expected_speed(
+        merged_option(entry, CONF_EXPECTED_UPLOAD, DEFAULT_EXPECTED_SPEED)
+    )
+
     await _async_migrate_registry(hass, entry, host, site)
 
     client = UnifiWanClient(hass, host, api_key, site, verify_ssl)
@@ -262,6 +280,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: UniFiWanConfigEntry) -> 
             configuration_url=f"https://{host}/",
         ),
         wan_numbers=wan_numbers,
+        expected_download=expected_download,
+        expected_upload=expected_upload,
         reload_signature=_reload_signature(entry),
     )
 

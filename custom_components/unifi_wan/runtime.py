@@ -32,6 +32,10 @@ class UniFiWanRuntimeData:
     dev_meta: dict[str, Any]
     device_info: DeviceInfo
     wan_numbers: list[int]
+    # What the line is sold as, in Mbit/s, for the comparison sensors.
+    # Zero means the option was left unset.
+    expected_download: float
+    expected_upload: float
     reload_signature: dict[str, Any]
 
 

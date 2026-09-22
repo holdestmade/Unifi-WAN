@@ -19,6 +19,8 @@ from .const import (
     CONF_API_KEY,
     CONF_AUTO_SPEEDTEST,
     CONF_AUTO_SPEEDTEST_MINUTES,
+    CONF_EXPECTED_DOWNLOAD,
+    CONF_EXPECTED_UPLOAD,
     CONF_HOST,
     CONF_RATE_INTERVAL,
     CONF_SCAN_INTERVAL,
@@ -26,12 +28,14 @@ from .const import (
     CONF_VERIFY_SSL,
     DEFAULT_AUTO_SPEEDTEST,
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
+    DEFAULT_EXPECTED_SPEED,
     DEFAULT_RATE_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SITE,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     MAX_AUTO_SPEEDTEST_MINUTES,
+    MAX_EXPECTED_SPEED,
     MAX_RATE_INTERVAL,
     MAX_SCAN_INTERVAL,
     MIN_AUTO_SPEEDTEST_MINUTES,
@@ -39,6 +43,7 @@ from .const import (
     MIN_SCAN_INTERVAL,
     REQUEST_TIMEOUT_SECONDS,
 )
+from .models import expected_speed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,19 +52,23 @@ API_KEY_SELECTOR = selector.selector({"text": {"type": "password"}})
 VALIDATE_TIMEOUT = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
 
 
-def _number(minimum: int, maximum: int) -> Any:
-    """A bounded whole-number field.
+def _number(
+    minimum: float, maximum: float, step: float = 1, unit: str | None = None
+) -> Any:
+    """A bounded number field.
 
     The bounds are the ones setup enforces anyway, shown in the dialog so a
     rejected value is explained where it is typed rather than silently
-    clamped afterwards.
+    clamped afterwards. A fractional step is for the speeds, which are sold
+    in halves as readily as whole numbers.
     """
     return selector.NumberSelector(
         selector.NumberSelectorConfig(
             min=minimum,
             max=maximum,
-            step=1,
+            step=step,
             mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement=unit,
         )
     )
 
@@ -364,6 +373,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
             )
+            expected_download = expected_speed(
+                user_input.get(
+                    CONF_EXPECTED_DOWNLOAD,
+                    self._opt(CONF_EXPECTED_DOWNLOAD, DEFAULT_EXPECTED_SPEED),
+                )
+            )
+            expected_upload = expected_speed(
+                user_input.get(
+                    CONF_EXPECTED_UPLOAD,
+                    self._opt(CONF_EXPECTED_UPLOAD, DEFAULT_EXPECTED_SPEED),
+                )
+            )
 
             new_options = {
                 CONF_HOST: host,
@@ -374,6 +395,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_RATE_INTERVAL: rate_interval,
                 CONF_AUTO_SPEEDTEST: auto_enable,
                 CONF_AUTO_SPEEDTEST_MINUTES: auto_minutes,
+                CONF_EXPECTED_DOWNLOAD: expected_download,
+                CONF_EXPECTED_UPLOAD: expected_upload,
             }
 
             try:
@@ -449,5 +472,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_AUTO_SPEEDTEST_MINUTES, DEFAULT_AUTO_SPEEDTEST_MINUTES
                     ),
                 ): _number(MIN_AUTO_SPEEDTEST_MINUTES, MAX_AUTO_SPEEDTEST_MINUTES),
+                vol.Optional(
+                    CONF_EXPECTED_DOWNLOAD,
+                    default=d(CONF_EXPECTED_DOWNLOAD, DEFAULT_EXPECTED_SPEED),
+                ): _number(0, MAX_EXPECTED_SPEED, step=0.1, unit="Mbit/s"),
+                vol.Optional(
+                    CONF_EXPECTED_UPLOAD,
+                    default=d(CONF_EXPECTED_UPLOAD, DEFAULT_EXPECTED_SPEED),
+                ): _number(0, MAX_EXPECTED_SPEED, step=0.1, unit="Mbit/s"),
             }
         )

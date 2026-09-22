@@ -142,6 +142,33 @@ A gateway that performs no lookup — some firmware does not — leaves them `un
 
 There is no separate ISP IP sensor: the public address these are derived from is already the **UniFi WAN IPv4** / **UniFi WAN\* IPv4** sensor above.
 
+**Expected line speed**
+
+Set what your line is sold as under **Options**, and the last speedtest is compared against it.
+
+- **UniFi WAN ISP Expected Download Speed** (**Mbit/s**)
+- **UniFi WAN ISP Expected Upload Speed** (**Mbit/s**)
+  - Simply what you configured, exposed as a sensor so a dashboard can put the two figures side by side.
+- **UniFi WAN ISP Download Speed Status**
+- **UniFi WAN ISP Upload Speed Status**
+  - `Expected`, `Faster` or `Slower`
+
+The verdict allows 5% either way:
+
+| Last speedtest, against a 500 Mbit/s line | State |
+| --- | --- |
+| above 525 | `Faster` |
+| 475 to 525 | `Expected` |
+| below 475 | `Slower` |
+
+The boundary counts as met — exactly 5% down is still the line delivering what it promised. A line is never sold as an exact number and a speedtest is not a precise instrument, so a tighter comparison would flip between states on noise alone.
+
+Both sensors carry `expected_mbps`, `measured_mbps`, `difference_mbps` and `difference_percent` as attributes, so "by how much?" needs no template.
+
+The comparison reads the same result the gateway-wide **UniFi Speedtest Download** / **Upload** sensors show, so the two can never disagree about what was measured. That means it follows the **active WAN** on a multi-WAN gateway; the expected figures are a single pair for the gateway, not one per line.
+
+Leave either at `0` and its pair of sensors reports `unknown`. The sensors are always created, so filling the option in later does not change which entities exist.
+
 **WAN identification**
 
 - **UniFi Active WAN ID**  
@@ -241,6 +268,13 @@ All options are available via the integration’s **Options** UI and can be chan
   - How often to trigger an automatic speedtest when enabled.  
   - With more than one WAN interface, each run cycles to the next WAN that currently has link, so every WAN accumulates its own per-WAN speedtest results over time. With a single WAN the plain speedtest command is used.  
   - The rotation stops automatically if the gateway has no per-WAN speedtest API *and* is seen to ignore the requested interface, since every run would then measure the active uplink anyway.
+
+**ISP line speed**
+
+- **ISP Expected Download Speed** / **ISP Expected Upload Speed** (**Mbit/s**, default **0**)
+  - What your line is sold as. Drives the **UniFi WAN ISP Download Speed Status** / **Upload Speed Status** sensors described above.
+  - `0` means not configured: those sensors stay `unknown` rather than comparing against nothing.
+  - Changing either reloads the integration, as the other options here do.
 
 ---
 

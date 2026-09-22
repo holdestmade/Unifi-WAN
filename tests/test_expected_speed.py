@@ -36,19 +36,23 @@ def test_the_option_is_normalised(stored, expected):
     ("measured", "verdict"),
     [
         (500.0, "Expected"),  # exactly the figure
-        (525.0, "Expected"),  # exactly 5% over, still met
-        (475.0, "Expected"),  # exactly 5% under, still met
-        (524.9, "Expected"),
-        (475.1, "Expected"),
-        (525.1, "Faster"),
+        (510.0, "Expected"),  # exactly 2% over, still met
+        (490.0, "Expected"),  # exactly 2% under, still met
+        (509.9, "Expected"),
+        (490.1, "Expected"),
+        (510.1, "Faster"),
         (600.0, "Faster"),
-        (474.9, "Slower"),
+        (489.9, "Slower"),
         (100.0, "Slower"),
         (0.0, "Slower"),
+        # Inside the old 5% band but outside the current 2% one, which is
+        # the whole point of having narrowed it.
+        (520.0, "Faster"),
+        (480.0, "Slower"),
     ],
 )
-def test_the_five_percent_band(measured, verdict):
-    """The boundary counts as met: 5% down is the line still delivering."""
+def test_the_tolerance_band(measured, verdict):
+    """The boundary counts as met: 2% down is the line still delivering."""
     assert speed_comparison(measured, 500.0) == verdict
 
 
@@ -72,15 +76,24 @@ def test_nothing_to_compare_is_unknown(measured, expected):
     assert speed_comparison(measured, expected) is None
 
 
+def test_the_band_matches_the_configured_tolerance():
+    """Guards against the constant and the tests drifting apart."""
+    from unifi_wan.const import SPEED_TOLERANCE
+
+    edge = 500.0 * (1 + SPEED_TOLERANCE)
+    assert speed_comparison(edge, 500.0) == "Expected"
+    assert speed_comparison(edge + 0.1, 500.0) == "Faster"
+
+
 def test_the_tolerance_is_adjustable():
     assert speed_comparison(510.0, 500.0, tolerance=0.01) == "Faster"
     assert speed_comparison(510.0, 500.0, tolerance=0.5) == "Expected"
 
 
 def test_a_slow_line_is_judged_on_its_own_scale():
-    """5% of 10 Mbit/s is half a megabit, not 25."""
-    assert speed_comparison(10.4, 10.0) == "Expected"
-    assert speed_comparison(10.6, 10.0) == "Faster"
+    """2% of 10 Mbit/s is a fifth of a megabit, not 10."""
+    assert speed_comparison(10.2, 10.0) == "Expected"
+    assert speed_comparison(10.3, 10.0) == "Faster"
 
 
 # ----------------------------------------------------------- the sensors
@@ -151,7 +164,8 @@ def test_the_sensors_exist_even_with_nothing_configured():
 
 def test_the_comparison_reads_the_speedtest_result():
     by = _by_key(500.0, 50.0)
-    data = _data(down=512.0, up=47.0)
+    # 505 is +1% and 47 is -6%, either side of the 2% band.
+    data = _data(down=505.0, up=47.0)
     assert by["isp_down_vs_expected"].value_fn(data) == "Expected"
     assert by["isp_up_vs_expected"].value_fn(data) == "Slower"
 
@@ -167,13 +181,17 @@ def test_the_comparison_is_unknown_without_an_expected_figure():
 
 
 def test_the_comparison_shows_its_arithmetic():
+    from unifi_wan.const import SPEED_TOLERANCE
+
     by = _by_key(500.0, 50.0)
     attrs = by["isp_down_vs_expected"].attributes_fn(_data(down=550.0))
     assert attrs["expected_mbps"] == 500.0
     assert attrs["measured_mbps"] == 550.0
     assert attrs["difference_mbps"] == 50.0
     assert attrs["difference_percent"] == 10.0
-    assert attrs["tolerance_percent"] == 5.0
+    # Read from the constant, so the attribute cannot disagree with the
+    # band the state was decided by.
+    assert attrs["tolerance_percent"] == SPEED_TOLERANCE * 100
 
 
 def test_the_attributes_survive_having_nothing_to_compare():

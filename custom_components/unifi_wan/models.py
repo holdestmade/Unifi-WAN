@@ -213,7 +213,7 @@ def speed_comparison(
     tolerance band either way, and "Expected" inside it - a line is never
     sold as an exact number and a speedtest is not a precise instrument,
     so anything tighter would flip between states on noise alone. The
-    boundary itself counts as expected: exactly 5% down is still the line
+    boundary itself counts as expected: exactly 2% down is still the line
     delivering what it promised.
 
     None where there is nothing to compare: no result yet, or no expected

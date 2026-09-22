@@ -153,15 +153,15 @@ Set what your line is sold as under **Options**, and the last speedtest is compa
 - **UniFi WAN ISP Upload Speed Status**
   - `Expected`, `Faster` or `Slower`
 
-The verdict allows 5% either way:
+The verdict allows 2% either way:
 
 | Last speedtest, against a 500 Mbit/s line | State |
 | --- | --- |
-| above 525 | `Faster` |
-| 475 to 525 | `Expected` |
-| below 475 | `Slower` |
+| above 510 | `Faster` |
+| 490 to 510 | `Expected` |
+| below 490 | `Slower` |
 
-The boundary counts as met — exactly 5% down is still the line delivering what it promised. A line is never sold as an exact number and a speedtest is not a precise instrument, so a tighter comparison would flip between states on noise alone.
+The boundary counts as met — exactly 2% down is still the line delivering what it promised. A line is never sold as an exact number and a speedtest is not a precise instrument, so some band is needed; 2% is narrow enough to notice a real shortfall and wide enough not to flip on measurement noise.
 
 Both sensors carry `expected_mbps`, `measured_mbps`, `difference_mbps` and `difference_percent` as attributes, so "by how much?" needs no template.
 

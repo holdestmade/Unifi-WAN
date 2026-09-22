@@ -44,8 +44,8 @@ MAX_EXPECTED_SPEED: Final = 10000.0
 # How far a result may sit from the expected figure and still count as
 # meeting it, as a fraction. A line is never sold as an exact number and
 # a speedtest is not a precise instrument, so a band is the only honest
-# comparison; 5% either way is the default.
-SPEED_TOLERANCE: Final = 0.05
+# comparison; 2% either way is the default.
+SPEED_TOLERANCE: Final = 0.02
 
 # The three states the comparison sensors report. Spelled as they are
 # displayed, because they are the sensor's state rather than a key.

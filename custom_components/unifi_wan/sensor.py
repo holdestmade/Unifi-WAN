@@ -399,7 +399,9 @@ EXPECTED_SPEED_SENSORS: Final[tuple[tuple[str, str, str, str], ...]] = (
 
 
 def _expected_speed_descriptions(
-    expected_download: float, expected_upload: float
+    expected_download: float,
+    expected_upload: float,
+    tolerance: float = SPEED_TOLERANCE,
 ) -> tuple[UniFiSensorDescription, ...]:
     """The configured line speeds, and how the last result compares.
 
@@ -436,8 +438,8 @@ def _expected_speed_descriptions(
                 icon=comparison_icon,
                 device_class=SensorDeviceClass.ENUM,
                 options=list(SPEED_COMPARISON_OPTIONS),
-                value_fn=_comparison_value_fn(field, target),
-                attributes_fn=_comparison_attributes_fn(field, target),
+                value_fn=_comparison_value_fn(field, target, tolerance),
+                attributes_fn=_comparison_attributes_fn(field, target, tolerance),
             )
         )
     return tuple(descriptions)
@@ -456,13 +458,15 @@ def _measured_speed(d: UniFiWanData, field: str) -> float | None:
         return None
 
 
-def _comparison_value_fn(field: str, expected: float) -> Callable[[UniFiWanData], Any]:
+def _comparison_value_fn(
+    field: str, expected: float, tolerance: float
+) -> Callable[[UniFiWanData], Any]:
     """Compare the last result with the configured figure."""
-    return lambda d: speed_comparison(_measured_speed(d, field), expected)
+    return lambda d: speed_comparison(_measured_speed(d, field), expected, tolerance)
 
 
 def _comparison_attributes_fn(
-    field: str, expected: float
+    field: str, expected: float, tolerance: float
 ) -> Callable[[UniFiWanData], dict[str, Any] | None]:
     """Show the arithmetic behind the state.
 
@@ -475,7 +479,9 @@ def _comparison_attributes_fn(
         base: dict[str, Any] = {
             "expected_mbps": expected or None,
             "measured_mbps": measured,
-            "tolerance_percent": round(SPEED_TOLERANCE * 100, 3),
+            # From the same figure the state was decided by, so the
+            # attribute cannot explain the band wrongly.
+            "tolerance_percent": round(tolerance * 100, 3),
         }
         if measured is None or not expected:
             return base
@@ -742,7 +748,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
 
     expected_descriptions = _expected_speed_descriptions(
-        runtime.expected_download, runtime.expected_upload
+        runtime.expected_download, runtime.expected_upload, runtime.speed_tolerance
     )
     for desc in (*SENSORS, *expected_descriptions):
         coord: DataUpdateCoordinator = (

@@ -64,11 +64,13 @@
           "auto_speedtest": "Run Speedtest Automatically",
           "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)",
           "expected_download_mbps": "ISP Expected Download Speed (Mbit/s, 0 to disable)",
-          "expected_upload_mbps": "ISP Expected Upload Speed (Mbit/s, 0 to disable)"
+          "expected_upload_mbps": "ISP Expected Upload Speed (Mbit/s, 0 to disable)",
+          "speed_tolerance_percent": "ISP Speed Tolerance (%)"
         },
         "data_description": {
           "expected_download_mbps": "What your line is sold as. The ISP Download Speed Status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
-          "expected_upload_mbps": "What your line is sold as. The ISP Upload Speed Status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare."
+          "expected_upload_mbps": "What your line is sold as. The ISP Upload Speed Status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
+          "speed_tolerance_percent": "How far either side of the expected speed still counts as meeting it. At 2%, a 500 Mbit/s line reads Expected between 490 and 510. Widen it for a connection that varies by time of day; 0 means only an exact match counts."
         }
       }
     },

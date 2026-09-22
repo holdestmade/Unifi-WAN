@@ -38,6 +38,7 @@ from .const import (
     CONF_RATE_INTERVAL,
     CONF_SCAN_INTERVAL,
     CONF_SITE,
+    CONF_SPEED_TOLERANCE,
     CONF_VERIFY_SSL,
     DEFAULT_AUTO_SPEEDTEST,
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
@@ -46,6 +47,7 @@ from .const import (
     DEFAULT_RATE_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SITE,
+    DEFAULT_SPEED_TOLERANCE_PERCENT,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     LEGACY_CONF_DEVICE_INTERVAL,
@@ -57,7 +59,7 @@ from .const import (
     SERVICE_RUN_SPEEDTEST,
 )
 from .coordinator import UniFiWanCoordinator, UniFiWanRatesCoordinator
-from .models import expected_speed
+from .models import expected_speed, speed_tolerance
 from .runtime import UniFiWanConfigEntry, UniFiWanRuntimeData
 from .speedtest import SpeedtestManager
 
@@ -102,6 +104,7 @@ RELOAD_OPTION_KEYS: Final = (
     # config entry on each state read for a figure that changes yearly.
     CONF_EXPECTED_DOWNLOAD,
     CONF_EXPECTED_UPLOAD,
+    CONF_SPEED_TOLERANCE,
 )
 
 
@@ -219,6 +222,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: UniFiWanConfigEntry) -> 
     expected_upload = expected_speed(
         merged_option(entry, CONF_EXPECTED_UPLOAD, DEFAULT_EXPECTED_SPEED)
     )
+    tolerance = speed_tolerance(
+        merged_option(entry, CONF_SPEED_TOLERANCE, DEFAULT_SPEED_TOLERANCE_PERCENT)
+    )
 
     await _async_migrate_registry(hass, entry, host, site)
 
@@ -282,6 +288,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: UniFiWanConfigEntry) -> 
         wan_numbers=wan_numbers,
         expected_download=expected_download,
         expected_upload=expected_upload,
+        speed_tolerance=tolerance,
         reload_signature=_reload_signature(entry),
     )
 

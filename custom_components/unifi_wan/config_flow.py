@@ -25,6 +25,7 @@ from .const import (
     CONF_RATE_INTERVAL,
     CONF_SCAN_INTERVAL,
     CONF_SITE,
+    CONF_SPEED_TOLERANCE,
     CONF_VERIFY_SSL,
     DEFAULT_AUTO_SPEEDTEST,
     DEFAULT_AUTO_SPEEDTEST_MINUTES,
@@ -32,18 +33,21 @@ from .const import (
     DEFAULT_RATE_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SITE,
+    DEFAULT_SPEED_TOLERANCE_PERCENT,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     MAX_AUTO_SPEEDTEST_MINUTES,
     MAX_EXPECTED_SPEED,
     MAX_RATE_INTERVAL,
     MAX_SCAN_INTERVAL,
+    MAX_SPEED_TOLERANCE_PERCENT,
     MIN_AUTO_SPEEDTEST_MINUTES,
     MIN_RATE_INTERVAL,
     MIN_SCAN_INTERVAL,
+    MIN_SPEED_TOLERANCE_PERCENT,
     REQUEST_TIMEOUT_SECONDS,
 )
-from .models import expected_speed
+from .models import expected_speed, speed_tolerance
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -389,6 +393,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 )
             )
 
+            # Stored as the percentage that was typed; the fraction is
+            # derived where it is used.
+            tolerance_percent = (
+                speed_tolerance(
+                    user_input.get(
+                        CONF_SPEED_TOLERANCE,
+                        self._opt(
+                            CONF_SPEED_TOLERANCE, DEFAULT_SPEED_TOLERANCE_PERCENT
+                        ),
+                    )
+                )
+                * 100
+            )
+
             new_options = {
                 CONF_HOST: host,
                 CONF_API_KEY: api_key,
@@ -400,6 +418,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_AUTO_SPEEDTEST_MINUTES: auto_minutes,
                 CONF_EXPECTED_DOWNLOAD: expected_download,
                 CONF_EXPECTED_UPLOAD: expected_upload,
+                CONF_SPEED_TOLERANCE: tolerance_percent,
             }
 
             try:
@@ -483,5 +502,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_EXPECTED_UPLOAD,
                     default=d(CONF_EXPECTED_UPLOAD, DEFAULT_EXPECTED_SPEED),
                 ): _number(0, MAX_EXPECTED_SPEED, step=0.1, unit="Mbit/s"),
+                vol.Optional(
+                    CONF_SPEED_TOLERANCE,
+                    default=d(CONF_SPEED_TOLERANCE, DEFAULT_SPEED_TOLERANCE_PERCENT),
+                ): _number(
+                    MIN_SPEED_TOLERANCE_PERCENT,
+                    MAX_SPEED_TOLERANCE_PERCENT,
+                    step=0.1,
+                    unit="%",
+                ),
             }
         )

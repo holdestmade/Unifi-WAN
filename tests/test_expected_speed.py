@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import pytest
 from helpers import gateway_payload
-from unifi_wan.const import MAX_EXPECTED_SPEED, SPEED_COMPARISON_OPTIONS
-from unifi_wan.models import expected_speed, extract_wan_data, speed_comparison
+from unifi_wan.const import (
+    MAX_EXPECTED_SPEED,
+    SPEED_COMPARISON_OPTIONS,
+    SPEED_TOLERANCE,
+)
+from unifi_wan.models import (
+    expected_speed,
+    extract_wan_data,
+    speed_comparison,
+    speed_tolerance,
+)
 from unifi_wan.sensor import _expected_speed_descriptions
 
 # ---------------------------------------------------- reading the option
@@ -212,3 +221,56 @@ def test_the_new_keys_do_not_collide_with_existing_sensors():
 
     existing = {d.key for d in SENSORS}
     assert existing.isdisjoint(_by_key())
+
+
+# ------------------------------------------------- the tolerance option
+
+
+@pytest.mark.parametrize(
+    ("stored", "fraction"),
+    [
+        (2, 0.02),
+        (2.0, 0.02),
+        ("2.5", 0.025),
+        (0, 0.0),  # only an exact match counts, which is a real choice
+        (5, 0.05),
+        (-1, 0.0),  # clamped to the floor
+        (500, 0.5),  # clamped to the ceiling
+        (None, 0.02),  # unreadable falls back to the default, never to zero
+        ("nonsense", 0.02),
+    ],
+)
+def test_the_tolerance_option_is_normalised(stored, fraction):
+    assert speed_tolerance(stored) == pytest.approx(fraction)
+
+
+def test_an_unreadable_tolerance_does_not_become_zero():
+    """Zero would make every result Faster or Slower, which is the worst
+    thing a mangled option could quietly do.
+    """
+    assert speed_tolerance("") == pytest.approx(SPEED_TOLERANCE)
+
+
+def test_a_configured_tolerance_reaches_the_sensors():
+    by = {
+        d.key: d for d in _expected_speed_descriptions(500.0, 50.0, speed_tolerance(10))
+    }
+    data = _data(down=540.0, up=1.0)
+    # 540 is +8%, inside a 10% band but outside the 2% default.
+    assert by["isp_down_vs_expected"].value_fn(data) == "Expected"
+    assert by["isp_down_vs_expected"].attributes_fn(data)["tolerance_percent"] == 10.0
+
+
+def test_a_zero_tolerance_demands_an_exact_match():
+    by = {
+        d.key: d for d in _expected_speed_descriptions(500.0, 50.0, speed_tolerance(0))
+    }
+    assert by["isp_down_vs_expected"].value_fn(_data(down=500.0)) == "Expected"
+    assert by["isp_down_vs_expected"].value_fn(_data(down=500.1)) == "Faster"
+    assert by["isp_down_vs_expected"].value_fn(_data(down=499.9)) == "Slower"
+
+
+def test_the_sensors_use_the_default_when_not_told_otherwise():
+    by = {d.key: d for d in _expected_speed_descriptions(500.0, 50.0)}
+    attrs = by["isp_down_vs_expected"].attributes_fn(_data(down=500.0))
+    assert attrs["tolerance_percent"] == SPEED_TOLERANCE * 100

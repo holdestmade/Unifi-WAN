@@ -36,6 +36,9 @@ class UniFiWanRuntimeData:
     # Zero means the option was left unset.
     expected_download: float
     expected_upload: float
+    # How far either way still counts as meeting the figure, as a
+    # fraction. Configured as a percentage.
+    speed_tolerance: float
     reload_signature: dict[str, Any]
 
 

@@ -42,10 +42,22 @@ DEFAULT_EXPECTED_SPEED: Final = 0.0
 MAX_EXPECTED_SPEED: Final = 10000.0
 
 # How far a result may sit from the expected figure and still count as
-# meeting it, as a fraction. A line is never sold as an exact number and
-# a speedtest is not a precise instrument, so a band is the only honest
-# comparison; 2% either way is the default.
-SPEED_TOLERANCE: Final = 0.02
+# meeting it. A line is never sold as an exact number and a speedtest is
+# not a precise instrument, so a band is the only honest comparison.
+#
+# Configurable, because the right width depends on the line: a stable
+# fibre service justifies a narrower band than a connection that varies
+# by time of day. Entered as a percentage, which is how anyone thinks
+# about it, and converted to the fraction the comparison uses.
+CONF_SPEED_TOLERANCE: Final = "speed_tolerance_percent"
+DEFAULT_SPEED_TOLERANCE_PERCENT: Final = 2.0
+MIN_SPEED_TOLERANCE_PERCENT: Final = 0.0
+MAX_SPEED_TOLERANCE_PERCENT: Final = 50.0
+
+# The default as the comparison wants it. Zero is a legitimate setting
+# here, unlike the expected speeds: it means only an exact match counts
+# as meeting the figure.
+SPEED_TOLERANCE: Final = DEFAULT_SPEED_TOLERANCE_PERCENT / 100
 
 # The three states the comparison sensors report. Spelled as they are
 # displayed, because they are the sensor's state rather than a key.

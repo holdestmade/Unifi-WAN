@@ -62,15 +62,18 @@ def _number(
     clamped afterwards. A fractional step is for the speeds, which are sold
     in halves as readily as whole numbers.
     """
-    return selector.NumberSelector(
-        selector.NumberSelectorConfig(
-            min=minimum,
-            max=maximum,
-            step=step,
-            mode=selector.NumberSelectorMode.BOX,
-            unit_of_measurement=unit,
-        )
+    config = selector.NumberSelectorConfig(
+        min=minimum,
+        max=maximum,
+        step=step,
+        mode=selector.NumberSelectorMode.BOX,
     )
+    if unit is not None:
+        # Only when there is one. The key is optional but must be a string
+        # when present, so passing None rejects the whole selector - and
+        # with it the entire options form, which then fails to load at all.
+        config["unit_of_measurement"] = unit
+    return selector.NumberSelector(config)
 
 
 class ValidationError(Exception):

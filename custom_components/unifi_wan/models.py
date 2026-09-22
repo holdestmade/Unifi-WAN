@@ -15,10 +15,13 @@ from typing import Any
 
 from .const import (
     DEFAULT_EXPECTED_SPEED,
+    DEFAULT_SPEED_TOLERANCE_PERCENT,
     GATEWAY_DEVICES,
     GATEWAY_RESULT_MATCH_SECONDS,
     MAX_EXPECTED_SPEED,
+    MAX_SPEED_TOLERANCE_PERCENT,
     MAX_WAN_INTERFACES,
+    MIN_SPEED_TOLERANCE_PERCENT,
     SPEED_AS_EXPECTED,
     SPEED_FASTER,
     SPEED_SLOWER,
@@ -204,6 +207,29 @@ def expected_speed(value: Any) -> float:
     return min(speed, MAX_EXPECTED_SPEED)
 
 
+def speed_tolerance(value: Any) -> float:
+    """A tolerance option, as the fraction the comparison uses.
+
+    Entered as a percentage because that is how the band is thought
+    about, and clamped to something meaningful: past half the expected
+    figure the comparison stops saying anything. Zero is allowed and
+    means only an exact match counts, which is a real choice rather than
+    a way of switching the comparison off.
+
+    Anything unreadable falls back to the default rather than to zero, so
+    a mangled option does not silently turn every result into Faster or
+    Slower.
+    """
+    try:
+        percent = float(value)
+    except (TypeError, ValueError):
+        percent = DEFAULT_SPEED_TOLERANCE_PERCENT
+    percent = min(
+        max(percent, MIN_SPEED_TOLERANCE_PERCENT), MAX_SPEED_TOLERANCE_PERCENT
+    )
+    return percent / 100
+
+
 def speed_comparison(
     measured: Any, expected: Any, tolerance: float = SPEED_TOLERANCE
 ) -> str | None:
@@ -213,7 +239,7 @@ def speed_comparison(
     tolerance band either way, and "Expected" inside it - a line is never
     sold as an exact number and a speedtest is not a precise instrument,
     so anything tighter would flip between states on noise alone. The
-    boundary itself counts as expected: exactly 5% down is still the line
+    boundary itself counts as expected: exactly 2% down is still the line
     delivering what it promised.
 
     None where there is nothing to compare: no result yet, or no expected

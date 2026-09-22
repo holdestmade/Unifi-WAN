@@ -153,15 +153,15 @@ Set what your line is sold as under **Options**, and the last speedtest is compa
 - **UniFi WAN ISP Upload Speed Status**
   - `Expected`, `Faster` or `Slower`
 
-The verdict allows 5% either way:
+The verdict allows a tolerance either way, 2% by default and configurable under **Options**. At 2%, against a 500 Mbit/s line:
 
 | Last speedtest, against a 500 Mbit/s line | State |
 | --- | --- |
-| above 525 | `Faster` |
-| 475 to 525 | `Expected` |
-| below 475 | `Slower` |
+| above 510 | `Faster` |
+| 490 to 510 | `Expected` |
+| below 490 | `Slower` |
 
-The boundary counts as met — exactly 5% down is still the line delivering what it promised. A line is never sold as an exact number and a speedtest is not a precise instrument, so a tighter comparison would flip between states on noise alone.
+The boundary counts as met — exactly 2% down is still the line delivering what it promised. A line is never sold as an exact number and a speedtest is not a precise instrument, so some band is needed. Widen it for a connection that varies by time of day, or set it to `0` so that only an exact match counts. Each sensor's `tolerance_percent` attribute reports the band it was judged by, so the state and the explanation cannot disagree.
 
 Both sensors carry `expected_mbps`, `measured_mbps`, `difference_mbps` and `difference_percent` as attributes, so "by how much?" needs no template.
 
@@ -274,7 +274,10 @@ All options are available via the integration’s **Options** UI and can be chan
 - **ISP Expected Download Speed** / **ISP Expected Upload Speed** (**Mbit/s**, default **0**)
   - What your line is sold as. Drives the **UniFi WAN ISP Download Speed Status** / **Upload Speed Status** sensors described above.
   - `0` means not configured: those sensors stay `unknown` rather than comparing against nothing.
-  - Changing either reloads the integration, as the other options here do.
+- **ISP Speed Tolerance** (**%**, default **2**)
+  - How far either side of the expected speed still counts as meeting it.
+  - `0` means only an exact match reads `Expected`; the maximum is `50`.
+- Changing any of these reloads the integration, as the other options here do.
 
 ---
 

@@ -31,6 +31,7 @@ from unifi_wan.const import (  # noqa: E402
     CONF_HOST,
     CONF_RATE_INTERVAL,
     CONF_SCAN_INTERVAL,
+    CONF_SPEED_TOLERANCE,
     MAX_EXPECTED_SPEED,
 )
 
@@ -67,6 +68,7 @@ def test_the_whole_options_schema_builds():
         CONF_RATE_INTERVAL,
         CONF_EXPECTED_DOWNLOAD,
         CONF_EXPECTED_UPLOAD,
+        CONF_SPEED_TOLERANCE,
     ):
         assert expected in keys
 
@@ -128,3 +130,18 @@ def test_the_reconfigure_schema_builds_from_stored_values():
     }
     assert defaults[CONF_HOST] == "10.0.0.1"
     assert defaults[CONF_AUTO_SPEEDTEST_MINUTES] == 120
+
+
+def test_the_tolerance_field_is_a_percentage():
+    """Entered as a percentage, which is how the band is thought about."""
+    handler = config_flow.OptionsFlowHandler.__new__(config_flow.OptionsFlowHandler)
+    handler._opt = lambda key, default=None: default
+    schema = handler._schema()
+    field = next(
+        validator
+        for marker, validator in schema.schema.items()
+        if str(marker) == CONF_SPEED_TOLERANCE
+    )
+    assert field.config["unit_of_measurement"] == "%"
+    assert field.config["min"] == 0
+    assert field.config["max"] == 50

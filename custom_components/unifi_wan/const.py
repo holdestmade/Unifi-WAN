@@ -33,6 +33,31 @@ DEFAULT_RATE_INTERVAL: Final = 5
 MIN_RATE_INTERVAL: Final = 1
 MAX_RATE_INTERVAL: Final = 600
 
+# What the line is sold as, in Mbit/s, for comparing a speedtest against.
+# Zero means "not configured": the integration has no way to know a
+# subscriber's plan, so the comparison sensors stay unknown until told.
+CONF_EXPECTED_DOWNLOAD: Final = "expected_download_mbps"
+CONF_EXPECTED_UPLOAD: Final = "expected_upload_mbps"
+DEFAULT_EXPECTED_SPEED: Final = 0.0
+MAX_EXPECTED_SPEED: Final = 10000.0
+
+# How far a result may sit from the expected figure and still count as
+# meeting it, as a fraction. A line is never sold as an exact number and
+# a speedtest is not a precise instrument, so a band is the only honest
+# comparison; 5% either way is the default.
+SPEED_TOLERANCE: Final = 0.05
+
+# The three states the comparison sensors report. Spelled as they are
+# displayed, because they are the sensor's state rather than a key.
+SPEED_AS_EXPECTED: Final = "Expected"
+SPEED_FASTER: Final = "Faster"
+SPEED_SLOWER: Final = "Slower"
+SPEED_COMPARISON_OPTIONS: Final[list[str]] = [
+    SPEED_AS_EXPECTED,
+    SPEED_FASTER,
+    SPEED_SLOWER,
+]
+
 CONF_AUTO_SPEEDTEST: Final = "auto_speedtest"
 CONF_AUTO_SPEEDTEST_MINUTES: Final = "auto_speedtest_minutes"
 DEFAULT_AUTO_SPEEDTEST: Final = True

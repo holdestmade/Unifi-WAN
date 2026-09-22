@@ -14,9 +14,15 @@ from functools import cached_property
 from typing import Any
 
 from .const import (
+    DEFAULT_EXPECTED_SPEED,
     GATEWAY_DEVICES,
     GATEWAY_RESULT_MATCH_SECONDS,
+    MAX_EXPECTED_SPEED,
     MAX_WAN_INTERFACES,
+    SPEED_AS_EXPECTED,
+    SPEED_FASTER,
+    SPEED_SLOWER,
+    SPEED_TOLERANCE,
     SPEEDTEST_SERVER_FIELDS,
     WAN_GEO_INFO_BLOCKS,
     WAN_ISP_FIELDS,
@@ -178,6 +184,56 @@ def is_newer(candidate: Any, stored: Any) -> bool:
         return False
     old_ts = speedtest_epoch(stored)
     return old_ts is None or new_ts > old_ts
+
+
+def expected_speed(value: Any) -> float:
+    """An expected-speed option as a plain number of Mbit/s.
+
+    Anything unreadable, negative or absent becomes zero, which the
+    comparison reads as "not configured" rather than as a line sold as
+    zero. Setup and the options dialog both normalise through this, so a
+    value stored by an older release or edited by hand is read the same
+    way as one just typed.
+    """
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_EXPECTED_SPEED
+    if speed <= 0:
+        return DEFAULT_EXPECTED_SPEED
+    return min(speed, MAX_EXPECTED_SPEED)
+
+
+def speed_comparison(
+    measured: Any, expected: Any, tolerance: float = SPEED_TOLERANCE
+) -> str | None:
+    """How a speedtest result compares with what the line is sold as.
+
+    Returns "Faster" or "Slower" only when the result is outside the
+    tolerance band either way, and "Expected" inside it - a line is never
+    sold as an exact number and a speedtest is not a precise instrument,
+    so anything tighter would flip between states on noise alone. The
+    boundary itself counts as expected: exactly 5% down is still the line
+    delivering what it promised.
+
+    None where there is nothing to compare: no result yet, or no expected
+    figure configured. Zero expected means not configured rather than a
+    line sold as zero, so it answers None rather than "Faster" forever.
+    """
+    try:
+        measured_value = float(measured)
+        expected_value = float(expected)
+    except (TypeError, ValueError):
+        return None
+    if expected_value <= 0:
+        return None
+    limit = expected_value * tolerance
+    difference = measured_value - expected_value
+    if difference > limit:
+        return SPEED_FASTER
+    if difference < -limit:
+        return SPEED_SLOWER
+    return SPEED_AS_EXPECTED
 
 
 def _extract_geo_info(gateway: dict[str, Any] | None) -> dict[int, dict[str, Any]]:

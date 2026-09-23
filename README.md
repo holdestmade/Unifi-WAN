@@ -217,7 +217,7 @@ Leave either at `0` and its pair of sensors reports `unknown`. The sensors are a
 
 - **`unifi_wan.run_speedtest`**
   - Triggers a one-off speedtest on the UniFi gateway  
-  - Optional `wan` field selects a specific WAN interface (e.g. `2`); omit it to test the active WAN  
+  - Optional `wan` field selects a specific WAN interface (e.g. `2`); omit it to test the active WAN. With several gateways configured, only those that have that WAN are tested, and a WAN none of them has is refused with an error rather than sent to the console  
   - The test runs in the background; sensors refresh automatically once the controller reports a new result
 
 - **`unifi_wan.dump_raw_data`**
@@ -287,8 +287,14 @@ All options are available via the integration’s **Options** UI and can be chan
 
 Use this when the console moves to a new address or you change the site. It
 keeps every entity and its history, and moves the integration's own identity
-with it, so the same console cannot end up configured twice. The same fields
-appear under **Options**, which now follows a change the same way.
+with it, so the same console cannot end up configured twice. It follows the
+same gateway only: the gateway's MAC address is recorded when the integration
+starts, and an address that answers with a different gateway is refused, since
+that gateway's figures do not belong in this one's history. The speedtest
+schedule is not part of this form; change it under **Configure**.
+
+The address and site also appear under **Configure**, which moves the
+integration's identity the same way but does not check which gateway answers.
 
 Every request to the console times out after 30 seconds. A console that
 accepts the connection and then stops answering therefore delays one poll,
@@ -343,7 +349,7 @@ For looking at your own data, redaction is only in the way — the hidden fields
 
 **Developer tools → Actions → UniFi WAN: Dump raw data → Perform action**
 
-Files are written to `config/unifi_wan_dumps/`, one per configured gateway, named `unifi_wan_<site>_<entry>_<YYYYmmdd-HHMMSS>.json`. The ten most recent per gateway are kept and older ones deleted; the `keep` field changes that. The action returns the paths it wrote, so the response pane in Developer tools tells you exactly where to look. Copy them off the host with the File editor / Samba / SSH add-on, or with `scp`.
+Files are written to `config/unifi_wan_dumps/`, one per configured gateway, named `unifi_wan_<site>_<entry>_<YYYYmmdd-HHMMSS>.json` (a second dump within the same second gets `-2`, `-3` and so on rather than replacing the first). The ten most recent per gateway are kept and older ones deleted; the `keep` field changes that. The action returns the paths it wrote, so the response pane in Developer tools tells you exactly where to look. Copy them off the host with the File editor / Samba / SSH add-on, or with `scp`.
 
 The endpoints are fetched together rather than in turn, and the file is serialised on a worker thread, so a dump does not hold up polling. On a large site the file is mostly the device list; past 20 MB the log says so, names the file and reminds you how many are being kept, since these live in the config directory that gets backed up.
 

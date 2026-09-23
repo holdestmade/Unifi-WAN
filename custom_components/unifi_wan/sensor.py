@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
+    SensorExtraStoredData,
     SensorStateClass,
 )
 from homeassistant.const import UnitOfDataRate, UnitOfTime
@@ -47,13 +48,23 @@ ATTRIBUTION_VERSION: Final = 2
 
 @dataclass
 class _WanSpeedtestExtraData(ExtraStoredData):
-    """Restore-state payload recording how a stored result was attributed."""
+    """Restore-state payload: the sensor's value, and how it was attributed.
 
+    The value is stored exactly as RestoreSensor stores it, because
+    async_get_last_sensor_data reads this same dict back and returns
+    nothing at all without it. The attribution stamp rides alongside.
+    """
+
+    sensor_data: SensorExtraStoredData
     version: int
     source: str | None
 
     def as_dict(self) -> dict[str, Any]:
-        return {"version": self.version, "source": self.source}
+        return {
+            **self.sensor_data.as_dict(),
+            "version": self.version,
+            "source": self.source,
+        }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -874,11 +885,14 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
 
     @property
     def extra_restore_state_data(self) -> _WanSpeedtestExtraData:
-        """Stamp stored values with the attribution scheme that produced
-        them, so a later release can tell which ones it may trust.
+        """The value to restore, stamped with the attribution scheme that
+        produced it so a later release can tell which ones it may trust.
         """
         result = self._speedtest.results.get(self._wan_number)
         return _WanSpeedtestExtraData(
+            sensor_data=SensorExtraStoredData(
+                self.native_value, self.native_unit_of_measurement
+            ),
             version=ATTRIBUTION_VERSION,
             source=result.get("source") if result else None,
         )

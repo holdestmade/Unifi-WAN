@@ -1,0 +1,10 @@
+# The real-core suite in tests_ha/: config entries set up by Home Assistant's
+# own config entry manager, flows through its flow manager and HTTP API, and
+# entities added by real platforms. pytest-homeassistant-custom-component
+# pins the Home Assistant release it was built against, so this file pins it
+# rather than homeassistant itself.
+#
+# This is the last release for Python 3.13 (Home Assistant 2026.2). CI also
+# runs the suite on the oldest supported core and the current one, on
+# Python 3.14; see the test-core matrix in .github/workflows/test.yml.
+pytest-homeassistant-custom-component==0.13.316

@@ -20,7 +20,7 @@ from homeassistant.core import (
     SupportsResponse,
     callback,
 )
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -34,6 +34,7 @@ from .const import (
     CONF_AUTO_SPEEDTEST_MINUTES,
     CONF_EXPECTED_DOWNLOAD,
     CONF_EXPECTED_UPLOAD,
+    CONF_GATEWAY_MAC,
     CONF_HOST,
     CONF_RATE_INTERVAL,
     CONF_SCAN_INTERVAL,
@@ -59,7 +60,13 @@ from .const import (
     SERVICE_RUN_SPEEDTEST,
 )
 from .coordinator import UniFiWanCoordinator, UniFiWanRatesCoordinator
-from .models import expected_speed, speed_tolerance
+from .models import (
+    config_unique_id,
+    expected_speed,
+    normalise_site,
+    same_mac,
+    speed_tolerance,
+)
 from .runtime import UniFiWanConfigEntry, UniFiWanRuntimeData
 from .speedtest import SpeedtestManager
 
@@ -136,6 +143,46 @@ def entry_runtimes(hass: HomeAssistant) -> list[UniFiWanRuntimeData]:
     ]
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Bring an entry stored by an older release up to date.
+
+    1.2 stores the site stripped and uses config_unique_id's unique id.
+    Releases before the July 2026 restructure used the host exactly as
+    typed, so the user step never recognised such an entry as the console
+    it is and the same console could be added twice; a site stored with
+    the whitespace a paste brings along failed every poll.
+    """
+    if entry.version > 1:
+        # From a newer release: nothing here knows what it stores.
+        return False
+    if entry.minor_version < 2:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        for stored in (data, options):
+            if CONF_SITE in stored:
+                stored[CONF_SITE] = normalise_site(stored[CONF_SITE])
+        merged = {**data, **options}
+        unique_id = config_unique_id(merged.get(CONF_HOST), merged.get(CONF_SITE))
+        if unique_id != entry.unique_id and any(
+            other.entry_id != entry.entry_id and other.unique_id == unique_id
+            for other in hass.config_entries.async_entries(DOMAIN)
+        ):
+            # Most likely the duplicate this migration exists to prevent,
+            # already made. Two entries cannot share the id, so this one
+            # keeps its old one; removing either entry clears it.
+            _LOGGER.warning(
+                "Another UniFi WAN entry already uses %s; %s keeps the unique id %s",
+                unique_id,
+                entry.title,
+                entry.unique_id,
+            )
+            unique_id = entry.unique_id
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, unique_id=unique_id, minor_version=2
+        )
+    return True
+
+
 async def _async_migrate_registry(
     hass: HomeAssistant, entry: ConfigEntry, host: str, site: str
 ) -> None:
@@ -144,14 +191,24 @@ async def _async_migrate_registry(
     """
     old_prefix = f"{host}_{site}_"
     new_prefix = f"{entry.entry_id}_"
+    registry = er.async_get(hass)
 
     @callback
     def _migrate(entity_entry: er.RegistryEntry) -> dict[str, str] | None:
-        if entity_entry.unique_id.startswith(old_prefix):
-            return {
-                "new_unique_id": new_prefix + entity_entry.unique_id[len(old_prefix) :]
-            }
-        return None
+        if not entity_entry.unique_id.startswith(old_prefix):
+            return None
+        new_unique_id = new_prefix + entity_entry.unique_id[len(old_prefix) :]
+        # Checked per entity: the registry refuses a unique id already in
+        # use by raising, which ends the whole migration and would leave
+        # every entity after this one unmigrated.
+        if registry.async_get_entity_id(entity_entry.domain, DOMAIN, new_unique_id):
+            _LOGGER.warning(
+                "Not migrating %s: %s already has its new unique id",
+                entity_entry.entity_id,
+                new_unique_id,
+            )
+            return None
+        return {"new_unique_id": new_unique_id}
 
     try:
         await er.async_migrate_entries(hass, entry.entry_id, _migrate)
@@ -251,6 +308,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: UniFiWanConfigEntry) -> 
     }
     wan_numbers = sorted(device_coordinator.data.wan)
 
+    # Recorded so reconfigure can tell this gateway at a new address from a
+    # different one. Written before the update listener is registered, so
+    # it does not trigger a reload of its own. Kept current here: whatever
+    # gateway answers at the configured address is this entry's gateway.
+    if dev_meta["mac"] and not same_mac(
+        entry.data.get(CONF_GATEWAY_MAC), dev_meta["mac"]
+    ):
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_GATEWAY_MAC: dev_meta["mac"]}
+        )
+
     rates_coordinator: UniFiWanRatesCoordinator | None = None
     if dev_meta["mac"] and rate_seconds > 0:
         rates_coordinator = UniFiWanRatesCoordinator(
@@ -314,7 +382,20 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
         async def handle_run_speedtest(call: ServiceCall) -> None:
             wan_number = call.data.get(ATTR_WAN)
-            for runtime in entry_runtimes(hass):
+            runtimes = entry_runtimes(hass)
+            if wan_number is not None:
+                # Only the gateways that have that WAN. Asking one for an
+                # interface it does not have is refused by the console, and
+                # that refusal reads as the console refusing targeted runs
+                # altogether, switching them off for the session.
+                runtimes = [r for r in runtimes if wan_number in r.wan_numbers]
+                if not runtimes:
+                    raise ServiceValidationError(
+                        translation_domain=DOMAIN,
+                        translation_key="unknown_wan",
+                        translation_placeholders={"wan": str(wan_number)},
+                    )
+            for runtime in runtimes:
                 runtime.speedtest.trigger(wan_number)
 
         hass.services.async_register(
@@ -363,6 +444,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: UniFiWanConfigEntry) ->
 async def async_reload_entry(hass: HomeAssistant, entry: UniFiWanConfigEntry) -> None:
     """Apply changed options, reloading only where one demands it."""
     runtime: UniFiWanRuntimeData | None = getattr(entry, "runtime_data", None)
+    if runtime is not None and runtime.reload_pending:
+        # Reauth or reconfigure wrote this change and reloads the entry
+        # itself; reloading here too would set it up twice.
+        return
     if runtime is not None and _reload_signature(entry) == runtime.reload_signature:
         # Nothing that requires a fresh setup changed. The auto-speedtest
         # enable flag is the only live-managed option: the switch entity

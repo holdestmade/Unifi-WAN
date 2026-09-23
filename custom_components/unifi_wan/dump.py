@@ -92,35 +92,68 @@ def _prefix(site: Any, entry_id: str) -> str:
     return f"unifi_wan_{_safe(site)}_{entry_id[:8]}_"
 
 
+# The timestamp in a dump's filename, fixed-width so names order by time.
+_STAMP_FORMAT = "%Y%m%d-%H%M%S"
+_STAMP_WIDTH = len("20260101-000000")
+# How many dumps one second may hold before giving up looking for a name.
+_MAX_SAME_SECOND = 100
+
+
 def _filename(prefix: str, moment: datetime) -> str:
     """A dump's filename. Fixed-width timestamp, so the directory listing
-    sorts chronologically and pruning can rely on it.
+    sorts chronologically and pruning can rely on it. A second dump within
+    the same second is numbered by _write_and_prune ("-2", "-3", ...).
     """
-    return f"{prefix}{moment.strftime('%Y%m%d-%H%M%S')}.json"
+    return f"{prefix}{moment.strftime(_STAMP_FORMAT)}.json"
+
+
+def _dump_order(prefix: str, path: Path) -> tuple[str, int]:
+    """Oldest first: by timestamp, then by the number within that second.
+
+    Not the bare name: "-2.json" sorts before ".json", which would make the
+    second dump of a second look older than the first.
+    """
+    rest = path.stem[len(prefix) :]
+    stamp, counter = rest[:_STAMP_WIDTH], rest[_STAMP_WIDTH + 1 :]
+    return stamp, int(counter) if counter.isdigit() else 1
 
 
 def _write_and_prune(
     path: Path, payload: dict[str, Any], prefix: str, keep: int
-) -> int:
+) -> tuple[Path, int]:
     """Write the dump and drop the oldest files past ``keep``.
 
-    Runs in the executor: this is blocking file I/O. Pruning matches on the
-    entry's own prefix, so two configured gateways do not evict each other's
-    dumps. Returns the size written, in bytes.
+    Runs in the executor: this is blocking file I/O. The file is created
+    exclusively, so a second dump in the same second - or a second service
+    call running alongside - takes the next number instead of overwriting
+    a file the first call has already reported as written. Pruning matches
+    on the entry's own prefix, so two configured gateways do not evict each
+    other's dumps. Returns where the dump went and its size, in bytes.
     """
     directory = path.parent
     directory.mkdir(parents=True, exist_ok=True)
     # default=str so a value the controller sends in a shape json cannot
     # represent still lands in the file rather than failing the whole dump.
     text = json.dumps(payload, indent=2, default=str)
-    path.write_text(text, encoding="utf-8")
+    stem = path.stem
+    for counter in range(1, _MAX_SAME_SECOND + 1):
+        target = path if counter == 1 else path.with_name(f"{stem}-{counter}.json")
+        try:
+            with target.open("x", encoding="utf-8") as handle:
+                handle.write(text)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileExistsError(f"{_MAX_SAME_SECOND} dumps already written at {stem}")
 
-    # The timestamp is fixed-width and in the filename, so a lexical sort is
-    # a chronological one.
     existing = sorted(
-        entry
-        for entry in directory.iterdir()
-        if entry.name.startswith(prefix) and entry.suffix == ".json"
+        (
+            entry
+            for entry in directory.iterdir()
+            if entry.name.startswith(prefix) and entry.suffix == ".json"
+        ),
+        key=lambda entry: _dump_order(prefix, entry),
     )
     for stale in existing[: max(0, len(existing) - keep)]:
         try:
@@ -128,7 +161,7 @@ def _write_and_prune(
         except OSError as err:  # pragma: no cover - a stale file is not fatal
             _LOGGER.debug("Could not remove old dump %s: %s", stale.name, err)
 
-    return len(text.encode("utf-8"))
+    return target, len(text.encode("utf-8"))
 
 
 def _snapshot(data: UniFiWanData) -> dict[str, Any]:
@@ -202,11 +235,13 @@ async def async_dump_entry(
     else:
         parsed = _snapshot(data)
         active_wan, match_reason = data.active_wan
+        # Copied for the reason _snapshot copies: the file is serialised on
+        # a worker thread while the speedtest manager writes these in place.
         derived = {
-            "wan_numbers": runtime.wan_numbers,
+            "wan_numbers": list(runtime.wan_numbers),
             "active_wan": active_wan,
             "match_reason": match_reason,
-            "latched_speedtest_results": runtime.speedtest.results,
+            "latched_speedtest_results": deepcopy(runtime.speedtest.results),
             "per_wan_api_available": data.speedtest_history_raw is not None,
             "targeted_speedtest_supported": runtime.client.targeted_speedtest_supported,
             "per_wan_speedtest_honoured": runtime.speedtest.per_wan_supported,
@@ -261,7 +296,7 @@ async def async_dump_entry(
         "derived": derived,
     }
 
-    size = await hass.async_add_executor_job(
+    path, size = await hass.async_add_executor_job(
         _write_and_prune, path, payload, prefix, keep
     )
     if size >= DUMP_SIZE_WARN_BYTES:

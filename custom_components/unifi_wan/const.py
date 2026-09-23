@@ -15,6 +15,9 @@ CONF_HOST: Final = "host"
 CONF_API_KEY: Final = "api_key"
 CONF_SITE: Final = "site"
 CONF_VERIFY_SSL: Final = "verify_ssl"
+# The gateway the entry was set up for, recorded so reconfigure can tell
+# the same gateway at a new address from a different one.
+CONF_GATEWAY_MAC: Final = "gateway_mac"
 
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 DEFAULT_SCAN_INTERVAL: Final = 30

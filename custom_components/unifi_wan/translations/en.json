@@ -23,14 +23,12 @@
       },
       "reconfigure": {
         "title": "Reconfigure UniFi WAN",
-        "description": "Change which console and site this gateway uses. Entities are kept.",
+        "description": "Change the address, API key or site this gateway is reached at. Entities and their history are kept. The speedtest schedule is under Configure.",
         "data": {
           "host": "Host / IP",
           "api_key": "API Key",
           "site": "Site",
-          "verify_ssl": "Verify SSL Certificate",
-          "auto_speedtest": "Run Speedtest Automatically",
-          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)"
+          "verify_ssl": "Verify SSL Certificate"
         }
       }
     },
@@ -45,7 +43,7 @@
     "abort": {
       "already_configured": "This UniFi controller and site is already configured.",
       "reauth_successful": "Re-authentication was successful.",
-      "wrong_console": "Those details point at a different console or site. Reconfigure keeps this entry's entities, so it can only follow the same gateway to a new address. Add the other console as a separate integration entry.",
+      "wrong_console": "That address answers with a different gateway from the one this entry was set up for. Reconfigure keeps this entry's entities, so it can only follow the same gateway to a new address or site. Add the other gateway as a separate integration entry.",
       "reconfigure_successful": "Reconfiguration was successful."
     }
   },
@@ -104,6 +102,11 @@
           "description": "How many dumps to keep per gateway before the oldest is deleted."
         }
       }
+    }
+  },
+  "exceptions": {
+    "unknown_wan": {
+      "message": "No configured UniFi gateway has a WAN{wan}. Leave the WAN field empty to test the active WAN."
     }
   }
 }

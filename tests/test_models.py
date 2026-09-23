@@ -233,6 +233,13 @@ def test_pppoe_interface_resolves():
     assert interface_to_wan_number("if!ppp0", {1: {"ifname": "ppp0"}}) == 1
 
 
+def test_the_naming_convention_only_names_a_wan_the_gateway_has():
+    wan = {1: {"ifname": "eth8"}, 2: {"ifname": "eth9"}}
+    assert interface_to_wan_number("wan2", wan) == 2
+    # A result recorded against WAN3 would sit where no sensor shows it.
+    assert interface_to_wan_number("wan3", wan) is None
+
+
 # ----------------------------------------------------------- speedtest block
 
 

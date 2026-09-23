@@ -33,3 +33,20 @@ jobs:
         run: pip install -r requirements-test.txt
       - name: Run tests
         run: pytest -q
+
+  test-core:
+    name: Pytest (running core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # tests_ha/ sets entries up through Home Assistant itself, so it needs
+      # pytest-homeassistant-custom-component and the core release it pins.
+      - name: Install
+        run: pip install -r requirements-test-ha.txt
+      # The timeout turns a speedtest wait that never ends into a failure
+      # rather than a job that runs until GitHub kills it.
+      - name: Run tests
+        run: pytest -q tests_ha --timeout 60

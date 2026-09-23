@@ -745,7 +745,9 @@ def interface_to_wan_number(iface: Any, wan: dict[int, dict[str, Any]]) -> int |
     uplinks ("ppp0") resolve as readily as plain ethernet ones. The
     "wan"/"wan2" spellings used by the speedtest command are handled too,
     but only after the section match: a literal interface name is stronger
-    evidence than a naming convention.
+    evidence than a naming convention. The convention only names a WAN
+    this gateway has - "wan3" on a two-WAN gateway identifies nothing, and
+    a result recorded against it would sit on a WAN no sensor shows.
     """
     s = normalise_interface(iface)
     if not s:
@@ -755,7 +757,8 @@ def interface_to_wan_number(iface: Any, wan: dict[int, dict[str, Any]]) -> int |
         for key in ("ifname", "name"):
             if lowered == str(wan_data.get(key) or "").strip().lower():
                 return wan_number
-    return wan_group_to_number(s)
+    number = wan_group_to_number(s)
+    return number if number in wan else None
 
 
 def gateway_speedtest_wan(d: UniFiWanData) -> int | None:

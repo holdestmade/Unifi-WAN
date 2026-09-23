@@ -12,9 +12,10 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from console import MockConsole, run_on
+from console import MockConsole, one_wan_gateway, run_on
 from harness import DOMAIN, entry_data, make_entry, setup_entry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
@@ -92,30 +93,46 @@ async def test_the_service_without_a_wan_runs_every_entrys_gateway(
     assert targeted(second) == [None]
 
 
-async def test_a_wan_the_gateway_does_not_have_does_not_disable_targeting(
+async def test_a_wan_the_gateway_does_not_have_is_refused(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS: one call naming WAN3 on a two-WAN gateway switches targeted
-    speedtests off for the rest of the session.
+    """Asking a two-WAN gateway for WAN3 used to switch targeted runs off.
 
-    The schema accepts any WAN from 1 to 4. For a WAN the gateway has no
-    section for, the manager asks for interface "wan3"; a console that
-    rejects an interface it does not have answers every form with an
-    error, and run_speedtest takes that as the controller not supporting
-    targeted runs at all.
+    The console refuses an interface it does not have, and that refusal
+    reads as the console refusing targeted runs altogether - so one bad
+    call disabled them, and the rotation with them, for the session.
     """
     console.on_post = run_on(HONOURS_TARGET, down=300.0, up=30.0)
     entry = await setup_entry(hass, make_entry(hass))
 
-    await hass.services.async_call(DOMAIN, "run_speedtest", {"wan": 3}, blocking=True)
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "run_speedtest", {"wan": 3}, blocking=True
+        )
+    assert err.value.translation_key == "unknown_wan"
     await settle(hass)
-    console.posts.clear()
+    assert console.speedtest_posts() == []
 
     await hass.services.async_call(DOMAIN, "run_speedtest", {"wan": 2}, blocking=True)
     await settle(hass)
-
-    assert entry.runtime_data.client.targeted_speedtest_supported is not False
+    assert entry.runtime_data.client.targeted_speedtest_supported is True
     assert targeted(console) == ["eth9"]
+
+
+async def test_a_wan_goes_only_to_the_gateways_that_have_it(
+    hass: HomeAssistant, console: MockConsole, aioclient_mock
+) -> None:
+    single = MockConsole(host="192.0.2.20", gateway=one_wan_gateway())
+    single.register(aioclient_mock)
+    console.on_post = run_on(HONOURS_TARGET, down=300.0, up=30.0)
+    single.on_post = run_on(HONOURS_TARGET, down=100.0, up=10.0)
+    await setup_entry(hass, make_entry(hass))
+    await setup_entry(hass, make_entry(hass, data=entry_data(host="192.0.2.20")))
+
+    await hass.services.async_call(DOMAIN, "run_speedtest", {"wan": 2}, blocking=True)
+    await settle(hass)
+    assert targeted(console) == ["eth9"]
+    assert single.speedtest_posts() == []
 
 
 async def test_a_refused_command_ends_the_run_at_once(

@@ -428,29 +428,35 @@ def test_the_auto_setting_is_applied_once(dispatched, monkeypatch):
     assert mgr._unsub_auto is None
 
 
-async def test_the_rotation_cycles_the_lines_that_are_up(dispatched, monkeypatch):
+def test_the_rotation_cycles_the_lines_that_are_up(dispatched, monkeypatch):
     data = build(gateway_payload(**TWO_WAN))
     mgr, _ = manager(data)
     asked: list[int | None] = []
-    monkeypatch.setattr(mgr, "async_run", lambda wan=None: _record(asked, wan))
-    await mgr._auto_speedtest(None)
-    await mgr._auto_speedtest(None)
-    await mgr._auto_speedtest(None)
+    monkeypatch.setattr(mgr, "trigger", lambda wan=None: asked.append(wan))
+    mgr._auto_speedtest(None)
+    mgr._auto_speedtest(None)
+    mgr._auto_speedtest(None)
     assert asked == [1, 2, 1]
 
 
-async def test_the_rotation_stops_once_it_is_pointless(dispatched, monkeypatch):
+def test_the_rotation_stops_once_it_is_pointless(dispatched, monkeypatch):
     data = build(gateway_payload(**TWO_WAN))
     mgr, _ = manager(data)
     mgr._per_wan_supported = False
     asked: list[int | None] = []
-    monkeypatch.setattr(mgr, "async_run", lambda wan=None: _record(asked, wan))
-    await mgr._auto_speedtest(None)
+    monkeypatch.setattr(mgr, "trigger", lambda wan=None: asked.append(wan))
+    mgr._auto_speedtest(None)
     assert asked == [None]
 
 
-async def _record(sink, value):
-    sink.append(value)
+def test_a_scheduled_run_is_one_of_the_entrys_tasks(dispatched):
+    """So unloading the entry cancels it, as it does a button press."""
+    data = build(gateway_payload(**TWO_WAN))
+    mgr, _ = manager(data)
+    mgr._auto_speedtest(None)
+    assert [name for name, _ in mgr.entry.tasks] == [
+        f"{mgr.entry.entry_id} unifi_wan speedtest"
+    ]
 
 
 # ------------------------------------------------------------ a whole run

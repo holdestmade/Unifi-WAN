@@ -105,5 +105,10 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "unknown_wan": {
+      "message": "No configured UniFi gateway has a WAN{wan}. Leave the WAN field empty to test the active WAN."
+    }
   }
 }

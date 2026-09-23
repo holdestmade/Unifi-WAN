@@ -20,7 +20,7 @@ from homeassistant.core import (
     SupportsResponse,
     callback,
 )
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -314,7 +314,20 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
         async def handle_run_speedtest(call: ServiceCall) -> None:
             wan_number = call.data.get(ATTR_WAN)
-            for runtime in entry_runtimes(hass):
+            runtimes = entry_runtimes(hass)
+            if wan_number is not None:
+                # Only the gateways that have that WAN. Asking one for an
+                # interface it does not have is refused by the console, and
+                # that refusal reads as the console refusing targeted runs
+                # altogether, switching them off for the session.
+                runtimes = [r for r in runtimes if wan_number in r.wan_numbers]
+                if not runtimes:
+                    raise ServiceValidationError(
+                        translation_domain=DOMAIN,
+                        translation_key="unknown_wan",
+                        translation_placeholders={"wan": str(wan_number)},
+                    )
+            for runtime in runtimes:
                 runtime.speedtest.trigger(wan_number)
 
         hass.services.async_register(

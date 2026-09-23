@@ -217,7 +217,7 @@ Leave either at `0` and its pair of sensors reports `unknown`. The sensors are a
 
 - **`unifi_wan.run_speedtest`**
   - Triggers a one-off speedtest on the UniFi gateway  
-  - Optional `wan` field selects a specific WAN interface (e.g. `2`); omit it to test the active WAN  
+  - Optional `wan` field selects a specific WAN interface (e.g. `2`); omit it to test the active WAN. With several gateways configured, only those that have that WAN are tested, and a WAN none of them has is refused with an error rather than sent to the console  
   - The test runs in the background; sensors refresh automatically once the controller reports a new result
 
 - **`unifi_wan.dump_raw_data`**

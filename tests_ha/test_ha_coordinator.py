@@ -4,6 +4,9 @@ diagnostics, all against a running core.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from console import HOST, T0, MockConsole, history_record
 from harness import DOMAIN, make_entry, setup_entry
@@ -16,6 +19,12 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.components.diagnostics import (
     get_diagnostics_for_config_entry,
+)
+
+MANIFEST = json.loads(
+    (
+        Path(__file__).parents[1] / "custom_components" / "unifi_wan" / "manifest.json"
+    ).read_text(encoding="utf-8")
 )
 
 
@@ -117,18 +126,37 @@ async def test_per_wan_sensors_show_the_history_as_soon_as_they_exist(
 async def test_a_half_written_gateway_block_is_completed_on_the_next_poll(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS on a console without per-WAN history.
-
-    The per-WAN route compares whole records because, as its own comment
-    says, the controller fills a run's figures in over several seconds
-    under one timestamp. The gateway route keys on the timestamp alone: it
-    latches the first poll's partial result and ignores the completed
-    block that follows, and the gateway-wide sensors then prefer that
-    latched copy because it ties on timestamp and is listed first.
+    """The controller fills a run's figures in over several seconds under
+    one timestamp. On a console without per-WAN history the first poll's
+    partial result used to be latched and the completed block ignored,
+    and the gateway-wide sensors preferred that latched copy because it
+    tied on timestamp and was listed first.
     """
     console.history = None
     entry = await setup_entry(hass, make_entry(hass))
 
+    console.finish_run(rundate=T0 + 600, down=400.0, up=None, iface="eth8")
+    await poll(hass, entry)
+    assert state(hass, entry, "wan1_speedtest_down") == "400.0"
+    assert state(hass, entry, "wan1_speedtest_up") == "unknown"
+
+    console.gateway["speedtest-status"]["xput_upload"] = 40.0
+    await poll(hass, entry)
+    assert state(hass, entry, "wan1_speedtest_up") == "40.0"
+    assert state(hass, entry, "speedtest_up") == "40.0"
+    # And a completed run is then left alone, poll after poll.
+    wan1 = entity_id(hass, "sensor", entry, "wan1_speedtest_up")
+    changed = hass.states.get(wan1).last_updated
+    await poll(hass, entry)
+    assert hass.states.get(wan1).last_updated == changed
+
+
+async def test_a_half_written_block_folded_into_per_wan_history_is_completed(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """The same, where the gateway's block tops up a per-WAN history that
+    does not carry the run."""
+    entry = await setup_entry(hass, make_entry(hass))
     console.finish_run(rundate=T0 + 600, down=400.0, up=None, iface="eth8")
     await poll(hass, entry)
     assert state(hass, entry, "wan1_speedtest_down") == "400.0"
@@ -137,6 +165,27 @@ async def test_a_half_written_gateway_block_is_completed_on_the_next_poll(
     await poll(hass, entry)
     assert state(hass, entry, "wan1_speedtest_up") == "40.0"
     assert state(hass, entry, "speedtest_up") == "40.0"
+
+
+async def test_a_run_is_attributed_once_its_wan_can_be_told(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """A run the first poll could not place used to be marked as seen all
+    the same, so the poll that could place it did nothing."""
+    console.history = None
+    entry = await setup_entry(hass, make_entry(hass))
+    uplink = console.gateway["uplink"]
+    # No interface named, and nothing to tell which line is the uplink.
+    console.gateway["uplink"] = {"up": True}
+    console.gateway["last_wan_interfaces"] = {}
+    console.finish_run(rundate=T0 + 600, down=410.0, up=41.0, iface=None)
+    await poll(hass, entry)
+    assert state(hass, entry, "wan1_speedtest_down") == "unknown"
+    assert state(hass, entry, "wan2_speedtest_down") == "unknown"
+
+    console.gateway["uplink"] = uplink
+    await poll(hass, entry)
+    assert state(hass, entry, "wan1_speedtest_down") == "410.0"
 
 
 # --------------------------------------------------------------- restore
@@ -239,7 +288,7 @@ async def test_diagnostics_download_is_redacted_and_serialisable(
     assert derived["per_wan_api_available"] is True
     # Integer WAN keys come through the JSON view as strings.
     assert set(derived["latched_speedtest_results"]) == {"1"}
-    assert diagnostics["integration"]["version"] == "1.11.0"
+    assert diagnostics["integration"]["version"] == MANIFEST["version"]
     assert diagnostics["controller"]["other_devices"] == [
         {"type": "usw", "model": "USW-24", "adopted": None, "has_uplink": False}
     ]

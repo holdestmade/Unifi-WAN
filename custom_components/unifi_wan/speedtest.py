@@ -39,12 +39,18 @@ from .models import (
     gateway_speedtest_wan,
     interface_to_wan_number,
     is_newer,
+    speedtest_epoch,
 )
 
 if TYPE_CHECKING:
     from .runtime import UniFiWanConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+# The figures a run's record carries. The controller fills them in over
+# several seconds under one timestamp, so a record already held is still
+# news when any of these has moved.
+_FIGURES = ("down", "up", "ping")
 
 
 class SpeedtestManager:
@@ -91,6 +97,10 @@ class SpeedtestManager:
         # their own previous state instead.
         data = coordinator.data
         self._last_attributed_run = data.speedtest.get("lastrun") if data else None
+        # The WAN that run was recorded against, so the rest of its figures
+        # can be filled in when they arrive. None for the seeded run above
+        # and for one judged stale: neither is to be recorded at all.
+        self._last_attributed_wan: int | None = None
         self._auto_wan_index = 0
         self._unsub_auto: CALLBACK_TYPE | None = None
 
@@ -124,8 +134,8 @@ class SpeedtestManager:
 
     @callback
     def async_shutdown(self) -> None:
-        """Cancel the schedule. Runs in flight are entry-scoped background
-        tasks, which Home Assistant cancels with the entry.
+        """Cancel the schedule. Runs in flight, scheduled ones included, are
+        the entry's background tasks, which Home Assistant cancels with it.
         """
         self.schedule_auto(False)
 
@@ -260,21 +270,28 @@ class SpeedtestManager:
             gateway_result.get("down") is not None
             or gateway_result.get("up") is not None
         )
-        if (
-            gateway_wan is not None
-            and has_figures
-            and is_newer(
-                gateway_result.get("lastrun"),
-                (self.results.get(gateway_wan) or {}).get("lastrun"),
-            )
-        ):
+        stored = (self.results.get(gateway_wan) or {}) if gateway_wan else {}
+        newer = is_newer(gateway_result.get("lastrun"), stored.get("lastrun"))
+        # The block recorded here on an earlier poll, caught before all of
+        # its figures were in. A per-WAN record of the same run is left to
+        # stand: it is the controller's own account of that WAN.
+        completes = (
+            bool(stored)
+            and stored.get("source") != "speedtest_api"
+            and speedtest_epoch(stored.get("lastrun"))
+            == speedtest_epoch(gateway_result.get("lastrun"))
+            and any(stored.get(k) != gateway_result.get(k) for k in _FIGURES)
+        )
+        if gateway_wan is not None and has_figures and (newer or completes):
             self.results[gateway_wan] = {
                 "down": gateway_result.get("down"),
                 "up": gateway_result.get("up"),
                 "ping": gateway_result.get("ping"),
                 "lastrun": gateway_result.get("lastrun"),
                 "source": attribution_source(data, gateway_wan),
-                "requested_wan": self._pending_wan,
+                "requested_wan": (
+                    self._pending_wan if newer else stored.get("requested_wan")
+                ),
                 **server_for(gateway_wan),
             }
             changed = True
@@ -293,11 +310,18 @@ class SpeedtestManager:
         """The gateway's single global result, attributed on evidence."""
         result = data.speedtest
         lastrun = result.get("lastrun")
-        if not lastrun or lastrun == self._last_attributed_run:
+        if not lastrun:
             return
         if result.get("down") is None and result.get("up") is None:
             return
-        self._last_attributed_run = lastrun
+        # A run already recorded is still news if its figures have moved:
+        # the controller fills them in over several seconds under the one
+        # timestamp, and a poll can catch the block half-written. The run
+        # seeded at startup, and one judged stale, have no WAN and stay
+        # ignored.
+        same_run = lastrun == self._last_attributed_run
+        if same_run and self._last_attributed_wan is None:
+            return
 
         requested = self._pending_wan
         wan_number = interface_to_wan_number(result.get("source_interface"), data.wan)
@@ -306,6 +330,8 @@ class SpeedtestManager:
             wan_number = data.active_wan[0]
             source = "active_wan"
         if wan_number is None:
+            # Not marked as seen, so a later poll that can resolve the
+            # active uplink still attributes this run.
             _LOGGER.debug(
                 "Speedtest result could not be attributed to a WAN "
                 "(source_interface=%r)",
@@ -313,27 +339,43 @@ class SpeedtestManager:
             )
             return
 
-        # A WAN's result never moves backwards in time. The controller can
-        # report an older run than the one already recorded - a block caught
-        # mid-rewrite falls back to the uplink's legacy fields, which on some
-        # firmware describe a run months earlier - and that must not replace
-        # a newer result with a stale one for as long as it takes the next
-        # poll to correct it.
         stored = self.results.get(wan_number)
-        if stored is not None and not is_newer(lastrun, stored.get("lastrun")):
-            _LOGGER.debug(
-                "Ignored a speedtest result for WAN%s older than the one held "
-                "(reported %s, holding %s)",
-                wan_number,
-                lastrun,
-                stored.get("lastrun"),
-            )
-            return
+        if same_run:
+            if (
+                wan_number != self._last_attributed_wan
+                or stored is None
+                or stored.get("lastrun") != lastrun
+                or all(stored.get(k) == result.get(k) for k in _FIGURES)
+            ):
+                return
+            # The rest of a run already attributed, so what was asked for
+            # and what was concluded from it stand.
+            requested = stored.get("requested_wan")
+            source = stored.get("source") or source
+        else:
+            self._last_attributed_run = lastrun
+            self._last_attributed_wan = None
+            # A WAN's result never moves backwards in time. The controller
+            # can report an older run than the one already recorded - a
+            # block caught mid-rewrite falls back to the uplink's legacy
+            # fields, which on some firmware describe a run months earlier -
+            # and that must not replace a newer result with a stale one for
+            # as long as it takes the next poll to correct it.
+            if stored is not None and not is_newer(lastrun, stored.get("lastrun")):
+                _LOGGER.debug(
+                    "Ignored a speedtest result for WAN%s older than the one "
+                    "held (reported %s, holding %s)",
+                    wan_number,
+                    lastrun,
+                    stored.get("lastrun"),
+                )
+                return
 
-        if requested is not None and requested != wan_number:
-            self._note_wrong_wan(requested, wan_number, source)
-        elif requested is not None and source == "source_interface":
-            self._per_wan_supported = True
+            if requested is not None and requested != wan_number:
+                self._note_wrong_wan(requested, wan_number, source)
+            elif requested is not None and source == "source_interface":
+                self._per_wan_supported = True
+            self._last_attributed_wan = wan_number
 
         self.results[wan_number] = {
             "down": result.get("down"),
@@ -349,7 +391,8 @@ class SpeedtestManager:
             **server_for(wan_number),
         }
         _LOGGER.debug(
-            "Attributed speedtest result to WAN%s (matched by %s, requested %s)",
+            "%s speedtest result for WAN%s (matched by %s, requested %s)",
+            "Completed the" if same_run else "Attributed a",
             wan_number,
             source,
             requested,
@@ -441,6 +484,17 @@ class SpeedtestManager:
         """Trigger a speedtest, optionally on a specific WAN interface, and
         wait (with a timeout) for the controller to report a fresh result.
         """
+        if wan_number is not None and wan_number not in self.wan_numbers:
+            # Asking for an interface the gateway does not have is refused
+            # by the console, and would be read as the console refusing
+            # targeted runs altogether. The service rejects such a number
+            # before it gets here; this keeps any other caller honest.
+            _LOGGER.warning(
+                "Not running a speedtest on WAN%s: this gateway has %s",
+                wan_number,
+                ", ".join(f"WAN{n}" for n in self.wan_numbers) or "no WANs",
+            )
+            return
         if self.running:
             _LOGGER.debug("Speedtest already in progress; ignoring trigger")
             return
@@ -567,9 +621,15 @@ class SpeedtestManager:
 
     # ----------------------------------------------------------------- auto
 
-    async def _auto_speedtest(self, _now) -> None:
-        """Run the scheduled speedtest, cycling through the WAN interfaces
+    @callback
+    def _auto_speedtest(self, _now) -> None:
+        """Start the scheduled speedtest, cycling through the WAN interfaces
         that currently have link so each WAN accumulates its own results.
+
+        Started through trigger, as a button press is, so the run is one of
+        the entry's background tasks and is cancelled with the entry. Run
+        from here directly it belonged to the time tracker instead, and
+        outlived an unload or reload - still sending the console commands.
 
         The rotation stops as soon as the controller is seen to ignore a
         requested interface: on those gateways every run tests the active
@@ -588,7 +648,7 @@ class SpeedtestManager:
             or self._per_wan_supported is False
         )
         if pointless:
-            await self.async_run()
+            self.trigger()
             return
         candidates = (
             [n for n in self.wan_numbers if (data.wan.get(n) or {}).get("up")]
@@ -598,6 +658,6 @@ class SpeedtestManager:
         if len(candidates) > 1:
             wan_number = candidates[self._auto_wan_index % len(candidates)]
             self._auto_wan_index += 1
-            await self.async_run(wan_number)
+            self.trigger(wan_number)
         else:
-            await self.async_run()
+            self.trigger()

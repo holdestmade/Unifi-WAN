@@ -166,15 +166,13 @@ async def test_unloading_cancels_a_manual_run_cleanly(
 async def test_an_automatic_run_does_not_outlive_its_entry(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS: a scheduled run keeps going after its entry is unloaded.
+    """A scheduled run is cancelled with its entry, as a manual one is.
 
-    Manual runs are started as the entry's background tasks, which Home
-    Assistant cancels on unload; async_shutdown's docstring says every run
-    is. The scheduled run is not: async_track_time_interval runs it as a
-    hass-wide background task. After the unload its coordinator is shut
-    down, so no poll can ever show a result, the wait times out, and the
-    retry path sends the console a second, untargeted speedtest on behalf
-    of an entry that no longer exists.
+    Up to 1.11.0 the time tracker ran it as a hass-wide task rather than
+    one of the entry's. After an unload its coordinator was shut down, so
+    no poll could show a result, the wait timed out, and the retry path
+    sent the console a second, untargeted speedtest on behalf of an entry
+    that no longer existed.
     """
     console.on_post = accept_and_record_nothing
     entry = await setup_entry(
@@ -196,11 +194,8 @@ async def test_an_automatic_run_does_not_outlive_its_entry(
 async def test_a_reload_mid_run_leaves_one_manager_running(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS for the same reason: a reload during a scheduled run leaves
-    the old manager's run going next to the new entry, still able to send
-    commands to the console. (Its signals carry the same entry id as the
-    new entities', but those only re-read the new manager's state, so the
-    new In Progress sensor itself stays correct.)
+    """A reload during a scheduled run ends that run, rather than leaving
+    it going next to the new entry and still able to command the console.
     """
     console.on_post = accept_and_record_nothing
     entry = await setup_entry(

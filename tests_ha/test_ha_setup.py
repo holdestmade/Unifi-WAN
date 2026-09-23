@@ -188,3 +188,27 @@ async def test_legacy_unique_ids_and_device_are_migrated(
     assert device.identifiers == {(DOMAIN, entry.entry_id)}
     # And no second device was created alongside it.
     assert len(dr.async_entries_for_config_entry(devices, entry.entry_id)) == 1
+
+
+async def test_one_unique_id_collision_does_not_stop_the_migration(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """The registry raises on a unique id already in use, which used to end
+    the whole migration at the first collision."""
+    entry = make_entry(hass)
+    registry = er.async_get(hass)
+    # Already migrated once, and a stale legacy copy left beside it.
+    registry.async_get_or_create(
+        "sensor", DOMAIN, f"{entry.entry_id}_wan_ipv4", config_entry=entry
+    )
+    stale = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{HOST}_{SITE}_wan_ipv4", config_entry=entry
+    )
+    other = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{HOST}_{SITE}_wan_ipv6", config_entry=entry
+    )
+    await setup_entry(hass, entry)
+    assert registry.async_get(stale.entity_id).unique_id == f"{HOST}_{SITE}_wan_ipv4"
+    assert registry.async_get(other.entity_id).unique_id == (
+        f"{entry.entry_id}_wan_ipv6"
+    )

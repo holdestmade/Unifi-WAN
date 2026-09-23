@@ -349,7 +349,7 @@ For looking at your own data, redaction is only in the way — the hidden fields
 
 **Developer tools → Actions → UniFi WAN: Dump raw data → Perform action**
 
-Files are written to `config/unifi_wan_dumps/`, one per configured gateway, named `unifi_wan_<site>_<entry>_<YYYYmmdd-HHMMSS>.json`. The ten most recent per gateway are kept and older ones deleted; the `keep` field changes that. The action returns the paths it wrote, so the response pane in Developer tools tells you exactly where to look. Copy them off the host with the File editor / Samba / SSH add-on, or with `scp`.
+Files are written to `config/unifi_wan_dumps/`, one per configured gateway, named `unifi_wan_<site>_<entry>_<YYYYmmdd-HHMMSS>.json` (a second dump within the same second gets `-2`, `-3` and so on rather than replacing the first). The ten most recent per gateway are kept and older ones deleted; the `keep` field changes that. The action returns the paths it wrote, so the response pane in Developer tools tells you exactly where to look. Copy them off the host with the File editor / Samba / SSH add-on, or with `scp`.
 
 The endpoints are fetched together rather than in turn, and the file is serialised on a worker thread, so a dump does not hold up polling. On a large site the file is mostly the device list; past 20 MB the log says so, names the file and reminds you how many are being kept, since these live in the config directory that gets backed up.
 

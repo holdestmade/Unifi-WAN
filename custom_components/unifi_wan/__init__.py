@@ -191,14 +191,24 @@ async def _async_migrate_registry(
     """
     old_prefix = f"{host}_{site}_"
     new_prefix = f"{entry.entry_id}_"
+    registry = er.async_get(hass)
 
     @callback
     def _migrate(entity_entry: er.RegistryEntry) -> dict[str, str] | None:
-        if entity_entry.unique_id.startswith(old_prefix):
-            return {
-                "new_unique_id": new_prefix + entity_entry.unique_id[len(old_prefix) :]
-            }
-        return None
+        if not entity_entry.unique_id.startswith(old_prefix):
+            return None
+        new_unique_id = new_prefix + entity_entry.unique_id[len(old_prefix) :]
+        # Checked per entity: the registry refuses a unique id already in
+        # use by raising, which ends the whole migration and would leave
+        # every entity after this one unmigrated.
+        if registry.async_get_entity_id(entity_entry.domain, DOMAIN, new_unique_id):
+            _LOGGER.warning(
+                "Not migrating %s: %s already has its new unique id",
+                entity_entry.entity_id,
+                new_unique_id,
+            )
+            return None
+        return {"new_unique_id": new_unique_id}
 
     try:
         await er.async_migrate_entries(hass, entry.entry_id, _migrate)

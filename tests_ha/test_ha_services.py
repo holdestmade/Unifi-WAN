@@ -196,8 +196,8 @@ async def test_the_dump_service_prunes_to_keep(
 async def test_two_dumps_in_one_second_are_both_kept(
     hass: HomeAssistant, console: MockConsole, tmp_path: Path, freezer
 ) -> None:
-    """FAILS: the filename has one-second resolution, so a second dump in
-    the same second overwrites the first while both calls report success.
+    """The filename has one-second resolution; a second dump in the same
+    second used to overwrite the first while both calls reported success.
     """
     hass.config.config_dir = str(tmp_path)
     await setup_entry(hass, make_entry(hass))
@@ -208,18 +208,17 @@ async def test_two_dumps_in_one_second_are_both_kept(
         )
         paths.append(response["files"][0]["path"])
     assert len(set(paths)) == 2
+    assert all(Path(path).exists() for path in paths)
     assert len(list((tmp_path / "unifi_wan_dumps").iterdir())) == 2
 
 
 async def test_the_dump_does_not_hand_live_state_to_the_writer_thread(
     hass: HomeAssistant, console: MockConsole, tmp_path: Path, monkeypatch
 ) -> None:
-    """FAILS: derived.latched_speedtest_results is the manager's own dict.
-
-    _snapshot deep-copies the parsed data precisely because the JSON is
-    serialised in an executor thread while the event loop keeps running;
-    the derived section passes the live results dict alongside it, which
-    the speedtest manager mutates in place on every attributed run.
+    """_snapshot deep-copies the parsed data because the JSON is
+    serialised in an executor thread while the event loop keeps running.
+    The derived section used to pass the live results dict alongside it,
+    which the speedtest manager mutates in place on every attributed run.
     """
     from custom_components.unifi_wan import dump
 

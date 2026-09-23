@@ -68,9 +68,31 @@ def test_another_entrys_dumps_are_not_evicted(tmp_path):
 def test_a_value_json_cannot_represent_still_lands_in_the_file(tmp_path):
     prefix = _prefix("default", "entry123")
     path = tmp_path / _filename(prefix, datetime(2026, 1, 1))
-    size = _write_and_prune(path, {"when": datetime(2026, 1, 1)}, prefix, keep=1)
+    written, size = _write_and_prune(
+        path, {"when": datetime(2026, 1, 1)}, prefix, keep=1
+    )
+    assert written == path
     assert size > 0
     assert "2026-01-01" in path.read_text()
+
+
+def test_a_second_dump_in_the_same_second_is_numbered_not_overwritten(tmp_path):
+    prefix = _prefix("default", "entry123")
+    path = tmp_path / _filename(prefix, datetime(2026, 1, 1))
+    first, _ = _write_and_prune(path, {"n": 1}, prefix, keep=10)
+    second, _ = _write_and_prune(path, {"n": 2}, prefix, keep=10)
+    assert first == path
+    assert second.name == path.stem + "-2.json"
+    assert '"n": 1' in first.read_text()
+    assert '"n": 2' in second.read_text()
+
+
+def test_pruning_keeps_the_later_dump_of_a_second(tmp_path):
+    prefix = _prefix("default", "entry123")
+    path = tmp_path / _filename(prefix, datetime(2026, 1, 1))
+    _write_and_prune(path, {"n": 1}, prefix, keep=1)
+    second, _ = _write_and_prune(path, {"n": 2}, prefix, keep=1)
+    assert [p.name for p in tmp_path.iterdir()] == [second.name]
 
 
 def test_the_directory_is_created_on_demand(tmp_path):

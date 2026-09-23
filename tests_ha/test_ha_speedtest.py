@@ -197,9 +197,10 @@ async def test_a_reload_mid_run_leaves_one_manager_running(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
     """FAILS for the same reason: a reload during a scheduled run leaves
-    the old manager's run going next to the new entry. Its "running"
-    signal is the new entry's too, so it also drives the new In Progress
-    sensor.
+    the old manager's run going next to the new entry, still able to send
+    commands to the console. (Its signals carry the same entry id as the
+    new entities', but those only re-read the new manager's state, so the
+    new In Progress sensor itself stays correct.)
     """
     console.on_post = accept_and_record_nothing
     entry = await setup_entry(

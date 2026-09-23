@@ -96,8 +96,10 @@ class MockConsole:
     ``gateway`` is the gateway device in stat/device; ``history`` is the
     v2 per-WAN body, or None to answer that endpoint 404 as older firmware
     does. ``status`` overrides the answer for a path ("stat/device",
-    "v2:speedtest", ...) with a bare status code. ``on_post`` decides what
-    a command does; the default accepts it and records nothing.
+    "v2:speedtest", ...) with a bare status code, and ``raises`` makes a
+    path fail the way a transport error does. ``on_post`` decides what a
+    command does; the default accepts it and records nothing. A request
+    whose X-API-Key is not ``api_key`` is answered 401, as the console does.
     """
 
     def __init__(
@@ -120,13 +122,16 @@ class MockConsole:
             "data": [history_record("WAN", T0, 500.0, 50.0)]
         }
         self.status: dict[str, int] = {}
+        self.raises: dict[str, BaseException] = {}
         self.posts: list[tuple[str, dict[str, Any] | None]] = []
         self.gets: list[str] = []
         self.on_post: PostHandler | None = None
+        self._mocker: AiohttpClientMocker | None = None
 
     # ----------------------------------------------------------- serving
 
     def register(self, aioclient_mock: AiohttpClientMocker) -> None:
+        self._mocker = aioclient_mock
         pattern = re.compile(rf"^https://{re.escape(self.host)}/")
         aioclient_mock.get(pattern, side_effect=self._handle)
         aioclient_mock.post(pattern, side_effect=self._handle)
@@ -150,6 +155,16 @@ class MockConsole:
         path = self._path(url)
         if path is None:
             return self._respond(method, url, HTTPStatus.NOT_FOUND, text="Not Found")
+        if path in self.raises:
+            response = self._respond(method, url, 200, text="")
+            response.exc = self.raises[path]
+            return response
+        # The mocker records the request, headers included, before asking
+        # this handler for the answer.
+        assert self._mocker is not None
+        headers = self._mocker.mock_calls[-1][3] or {}
+        if headers.get("X-API-Key") != self.api_key:
+            return self._respond(method, url, 401, text="Unauthorized")
         if method.lower() == "post":
             self.posts.append((path, data))
             if path in self.status:

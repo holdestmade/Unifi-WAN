@@ -7,7 +7,15 @@ binary_sensor, button and switch - are forwarded and loaded for real.
 
 from __future__ import annotations
 
-from console import HOST, SITE, MockConsole, one_wan_gateway
+from console import (
+    HOST,
+    MAC,
+    SITE,
+    MockConsole,
+    express_in_mesh_mode,
+    one_wan_gateway,
+    udr7_with_5g_backup,
+)
 from harness import DOMAIN, entry_data, make_entry, setup_entry
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
@@ -212,3 +220,27 @@ async def test_one_unique_id_collision_does_not_stop_the_migration(
     assert registry.async_get(other.entity_id).unique_id == (
         f"{entry.entry_id}_wan_ipv6"
     )
+
+
+async def test_a_mesh_express_listed_first_is_not_the_gateway(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """Issue #68: a UDR7 with a 5G backup as WAN3, and an Express 7 in
+    mesh mode listed before it. Both report "udm"; the Express was taken,
+    so the entry showed one WAN - the backup - as the active uplink."""
+    console.gateway = udr7_with_5g_backup()
+    console.leading_devices = [express_in_mesh_mode()]
+    entry = await setup_entry(hass, make_entry(hass))
+
+    runtime = entry.runtime_data
+    assert runtime.dev_meta["model"] == "UDMA67A"
+    assert entry.data["gateway_mac"] == MAC
+    assert runtime.wan_numbers == [1, 3]
+    assert hass.states.get(entity_id(hass, "sensor", entry, "active_wan_id")).state == (
+        "WAN1"
+    )
+    assert hass.states.get(entity_id(hass, "sensor", entry, "wan3_ipv4")).state == (
+        "10.64.0.2"
+    )
+    for key in ("run_speedtest_wan1", "run_speedtest_wan3"):
+        assert hass.states.get(entity_id(hass, "button", entry, key)) is not None

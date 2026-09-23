@@ -9,7 +9,12 @@ the bug report needs.
 from __future__ import annotations
 
 import pytest
-from unifi_wan.diagnostics import REDACTED, _looks_identifying, _redact
+from unifi_wan.diagnostics import (
+    REDACTED,
+    _device_summary,
+    _looks_identifying,
+    _redact,
+)
 
 
 def test_known_keys_are_redacted():
@@ -140,3 +145,31 @@ def test_a_list_of_devices_is_walked():
 def test_non_string_values_are_never_shape_matched():
     out = _redact({"count": 19216811, "ratio": 1.2345, "flag": False})
     assert out == {"count": 19216811, "ratio": 1.2345, "flag": False}
+
+
+def test_the_device_summary_shows_what_the_gateway_was_chosen_on():
+    """Issue #68 was a mesh-mode Express taken for the gateway; the
+    summary of the devices passed over now says why they were."""
+    express = {
+        "type": "udm",
+        "model": "UDMA69B",
+        "adopted": True,
+        "uplink": {"comment": "LAN"},
+        "device_mode_override": "mesh",
+        "uplink_depth": 1,
+        "wan3": {"ifname": "gre1"},
+        "mac": "aa:bb:cc:dd:ee:07",
+        "name": "Hallway",
+    }
+    gateway = {"type": "udm", "model": "UDMA67A", "last_wan_interfaces": {}}
+    assert _device_summary([express, gateway], gateway) == [
+        {
+            "type": "udm",
+            "model": "UDMA69B",
+            "adopted": True,
+            "has_uplink": True,
+            "mode": "mesh",
+            "uplink_depth": 1,
+            "wan_blocks": ["wan3"],
+        }
+    ]

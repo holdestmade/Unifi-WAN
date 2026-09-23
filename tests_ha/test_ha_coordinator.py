@@ -290,6 +290,14 @@ async def test_diagnostics_download_is_redacted_and_serialisable(
     assert set(derived["latched_speedtest_results"]) == {"1"}
     assert diagnostics["integration"]["version"] == MANIFEST["version"]
     assert diagnostics["controller"]["other_devices"] == [
-        {"type": "usw", "model": "USW-24", "adopted": None, "has_uplink": False}
+        {
+            "type": "usw",
+            "model": "USW-24",
+            "adopted": None,
+            "has_uplink": False,
+            "mode": None,
+            "uplink_depth": None,
+            "wan_blocks": [],
+        }
     ]
     assert HOST not in str(diagnostics)

@@ -15,7 +15,7 @@ from typing import Any, Final
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
-from .const import DOMAIN
+from .const import DOMAIN, MAX_WAN_INTERFACES
 from .models import UniFiWanData
 from .runtime import UniFiWanConfigEntry
 
@@ -232,11 +232,21 @@ def _redact(data: Any, parent_key: Any = None) -> Any:
     return {key: _redact_value(key, value) for key, value in data.items()}
 
 
+# The blocks find_gateway weighs, reported per device as present or not.
+_WAN_BLOCKS: Final[tuple[str, ...]] = (
+    "last_wan_interfaces",
+    "wan",
+    *(f"wan{i}" for i in range(1, MAX_WAN_INTERFACES + 1)),
+)
+
+
 def _device_summary(devices: list[dict], gateway: dict[str, Any] | None) -> list[dict]:
     """Everything on the site other than the gateway, named but not dumped.
 
     Only the gateway's own payload drives this integration, so the rest is
-    reduced to enough context to spot a misidentified gateway.
+    reduced to what find_gateway decides on, which is what it takes to
+    spot a misidentified gateway - an Express in mesh mode taken for the
+    router beside it, say. None of it identifies anyone.
     """
     gateway_id = id(gateway) if gateway else None
     summary = []
@@ -249,6 +259,9 @@ def _device_summary(devices: list[dict], gateway: dict[str, Any] | None) -> list
                 "model": device.get("model"),
                 "adopted": device.get("adopted"),
                 "has_uplink": "uplink" in device,
+                "mode": device.get("device_mode_override"),
+                "uplink_depth": device.get("uplink_depth"),
+                "wan_blocks": [key for key in _WAN_BLOCKS if key in device],
             }
         )
     return summary

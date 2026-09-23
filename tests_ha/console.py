@@ -76,6 +76,37 @@ def one_wan_gateway() -> dict[str, Any]:
     return device
 
 
+def express_in_mesh_mode() -> dict[str, Any]:
+    """A UniFi Express 7 set up as a mesh access point, as issue #68's
+    console reported it: the gateway's own "udm" type, a LAN uplink to a
+    switch, and a WAN section for the 5G backup's tunnel."""
+    return {
+        "type": "udm",
+        "model": "UDMA69B",
+        "mac": "aa:bb:cc:00:00:07",
+        "version": "5.2.10.34061",
+        "adopted": True,
+        "device_mode_override": "mesh",
+        "is_access_point": True,
+        "uplink_depth": 1,
+        "uplink": {"comment": "LAN", "name": "eth0", "up": True, "uplink_depth": 2},
+        "wan3": {"name": "gre1", "ifname": "gre1", "up": True, "type": "wireless_5g"},
+        "speedtest-status": {"rundate": 0, "xput_download": 0.0, "xput_upload": 0.0},
+    }
+
+
+def udr7_with_5g_backup() -> dict[str, Any]:
+    """The site's real gateway in that report: a UDR7 with a wired WAN1 and
+    the 5G backup as WAN3."""
+    device = two_wan_gateway()
+    device["model"] = "UDMA67A"
+    del device["wan2"]
+    device["wan3"] = {"up": True, "ip": "10.64.0.2", "ifname": "gre1", "name": "gre1"}
+    device["last_wan_interfaces"] = {"WAN": {"alive": True}, "WAN3": {"alive": True}}
+    device["last_wan_status"] = {"WAN": "online", "WAN3": "online"}
+    return device
+
+
 def history_record(group: str, when: int, down: float, up: float) -> dict[str, Any]:
     """One per-WAN record from the v2 speedtest API (timestamps in ms)."""
     return {
@@ -118,6 +149,8 @@ class MockConsole:
         self.other_devices: list[dict[str, Any]] = [
             {"type": "usw", "model": "USW-24", "mac": "11:22:33:44:55:66"}
         ]
+        # Listed ahead of the gateway, the order a console may report them in.
+        self.leading_devices: list[dict[str, Any]] = []
         self.history: dict[str, Any] | None = {
             "data": [history_record("WAN", T0, 500.0, 50.0)]
         }
@@ -207,7 +240,7 @@ class MockConsole:
 
     def devices(self) -> list[dict[str, Any]]:
         gateway = [deepcopy(self.gateway)] if self.gateway is not None else []
-        return gateway + deepcopy(self.other_devices)
+        return deepcopy(self.leading_devices) + gateway + deepcopy(self.other_devices)
 
     def finish_run(
         self,

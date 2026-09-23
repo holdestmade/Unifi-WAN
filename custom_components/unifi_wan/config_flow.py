@@ -10,7 +10,7 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigFlowResult
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -21,6 +21,7 @@ from .const import (
     CONF_AUTO_SPEEDTEST_MINUTES,
     CONF_EXPECTED_DOWNLOAD,
     CONF_EXPECTED_UPLOAD,
+    CONF_GATEWAY_MAC,
     CONF_HOST,
     CONF_RATE_INTERVAL,
     CONF_SCAN_INTERVAL,
@@ -47,7 +48,15 @@ from .const import (
     MIN_SPEED_TOLERANCE_PERCENT,
     REQUEST_TIMEOUT_SECONDS,
 )
-from .models import expected_speed, speed_tolerance
+from .models import (
+    config_unique_id,
+    expected_speed,
+    find_gateway,
+    normalise_host,
+    normalise_site,
+    same_mac,
+    speed_tolerance_percent,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,24 +125,38 @@ class Timeout(ValidationError):
     error_key = "timeout"
 
 
-def _clean_host(host: str) -> str:
-    """Normalize a host: strip whitespace and scheme, lowercase, drop any path."""
-    host = (host or "").strip().lower().removeprefix("https://").removeprefix("http://")
-    return host.split("/", 1)[0]
+def _held_by_another(hass: HomeAssistant, entry: ConfigEntry, unique_id: str) -> bool:
+    """Whether some other entry already configures that console and site."""
+    return any(
+        other.entry_id != entry.entry_id and other.unique_id == unique_id
+        for other in hass.config_entries.async_entries(DOMAIN)
+    )
 
 
-def _unique_id(host: str, site: str) -> str:
-    """One configured console and site, however its address was typed."""
-    return f"{_clean_host(host)}-{(site or DEFAULT_SITE).strip()}"
+@callback
+def _async_expect_reload(entry: ConfigEntry) -> None:
+    """Tell the update listener this flow reloads the entry itself.
+
+    async_update_reload_and_abort schedules a reload, and the change it
+    writes also fires the update listener, which would reload the entry a
+    second time for the same change.
+    """
+    runtime = getattr(entry, "runtime_data", None)
+    if entry.state is ConfigEntryState.LOADED and runtime is not None:
+        runtime.reload_pending = True
 
 
 async def _async_validate(
     hass: HomeAssistant, host: str, api_key: str, site: str, verify_ssl: bool
-) -> None:
-    """Probe /stat/device to check connectivity and basic shape."""
-    host = _clean_host(host)
+) -> str | None:
+    """Probe /stat/device to check connectivity and basic shape.
+
+    Returns the MAC of the gateway the console reports, or None when it
+    reports none it recognises as one.
+    """
+    host = normalise_host(host)
     api_key = (api_key or "").strip()
-    site = (site or DEFAULT_SITE).strip()
+    site = normalise_site(site)
     session = async_get_clientsession(hass, verify_ssl)
     url = f"https://{host}/proxy/network/api/s/{site}/stat/device"
     headers = {"X-API-Key": api_key}
@@ -159,19 +182,34 @@ async def _async_validate(
         raise CannotConnect(str(e)) from e
     if not isinstance(js, dict) or "data" not in js:
         raise CannotConnect("Unexpected response shape")
+    devices = js["data"] if isinstance(js["data"], list) else []
+    gateway = find_gateway(devices)
+    return (gateway or {}).get("mac") or None
+
+
+def _connection_fields(defaults: Mapping[str, Any]) -> dict[Any, Any]:
+    """Where the console is and how to reach it: the reconfigure form."""
+    return {
+        vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+        vol.Required(CONF_API_KEY): API_KEY_SELECTOR,
+        vol.Optional(CONF_SITE, default=defaults.get(CONF_SITE, DEFAULT_SITE)): str,
+        vol.Optional(
+            CONF_VERIFY_SSL,
+            default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+        ): bool,
+    }
 
 
 def _connection_schema(defaults: Mapping[str, Any]) -> vol.Schema:
-    """The connection fields, shared by the user and reconfigure steps."""
+    """The user step: the connection, and the speedtest schedule to start on.
+
+    Reconfigure shows the connection alone. It writes nothing else back, so
+    a speedtest field there would take a value and silently drop it; the
+    schedule is changed in the options dialog instead.
+    """
     return vol.Schema(
         {
-            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
-            vol.Required(CONF_API_KEY): API_KEY_SELECTOR,
-            vol.Optional(CONF_SITE, default=defaults.get(CONF_SITE, DEFAULT_SITE)): str,
-            vol.Optional(
-                CONF_VERIFY_SSL,
-                default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
-            ): bool,
+            **_connection_fields(defaults),
             vol.Optional(
                 CONF_AUTO_SPEEDTEST,
                 default=defaults.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST),
@@ -188,6 +226,9 @@ def _connection_schema(defaults: Mapping[str, Any]) -> vol.Schema:
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+    # 2: the site is stored stripped and the unique id is config_unique_id's.
+    # async_migrate_entry brings older entries up to it.
+    MINOR_VERSION = 2
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -195,9 +236,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            host = _clean_host(user_input[CONF_HOST])
+            host = normalise_host(user_input[CONF_HOST])
             api_key = user_input[CONF_API_KEY]
-            site = user_input.get(CONF_SITE, DEFAULT_SITE)
+            site = normalise_site(user_input.get(CONF_SITE))
             verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             auto_enable = user_input.get(CONF_AUTO_SPEEDTEST, DEFAULT_AUTO_SPEEDTEST)
             auto_minutes = max(
@@ -210,24 +251,26 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
             try:
-                await _async_validate(self.hass, host, api_key, site, verify_ssl)
+                gateway_mac = await _async_validate(
+                    self.hass, host, api_key, site, verify_ssl
+                )
             except ValidationError as e:
                 _LOGGER.warning("Validation failed (%s): %s", e.error_key, e)
                 errors["base"] = e.error_key
             else:
-                await self.async_set_unique_id(_unique_id(host, site))
+                await self.async_set_unique_id(config_unique_id(host, site))
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=f"UniFi WAN ({host})",
-                    data={
-                        CONF_HOST: host,
-                        CONF_API_KEY: api_key,
-                        CONF_SITE: site,
-                        CONF_VERIFY_SSL: verify_ssl,
-                        CONF_AUTO_SPEEDTEST: auto_enable,
-                        CONF_AUTO_SPEEDTEST_MINUTES: auto_minutes,
-                    },
-                )
+                data = {
+                    CONF_HOST: host,
+                    CONF_API_KEY: api_key,
+                    CONF_SITE: site,
+                    CONF_VERIFY_SSL: verify_ssl,
+                    CONF_AUTO_SPEEDTEST: auto_enable,
+                    CONF_AUTO_SPEEDTEST_MINUTES: auto_minutes,
+                }
+                if gateway_mac:
+                    data[CONF_GATEWAY_MAC] = gateway_mac
+                return self.async_create_entry(title=f"UniFi WAN ({host})", data=data)
 
         return self.async_show_form(
             step_id="user",
@@ -240,28 +283,44 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Change where an existing entry points, keeping its entities.
 
-        The options dialog can change these too, but only this step can
-        move the entry's unique id with them, which is what stops a console
-        that has been re-addressed from being configurable twice.
+        Follows the same gateway to a new address or site, and moves the
+        entry's unique id with it, so a console that has been re-addressed
+        cannot be configured twice. The gateway is recognised by the MAC
+        recorded at setup; where none was recorded yet, or the console
+        reports no gateway, there is nothing to compare and the change is
+        taken as given, as the options dialog takes it.
         """
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            host = _clean_host(user_input[CONF_HOST])
-            site = user_input.get(CONF_SITE, DEFAULT_SITE)
+            host = normalise_host(user_input[CONF_HOST])
+            site = normalise_site(user_input.get(CONF_SITE))
             api_key = user_input[CONF_API_KEY]
             verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             try:
-                await _async_validate(self.hass, host, api_key, site, verify_ssl)
+                gateway_mac = await _async_validate(
+                    self.hass, host, api_key, site, verify_ssl
+                )
             except ValidationError as e:
                 _LOGGER.warning(
                     "Reconfigure validation failed (%s): %s", e.error_key, e
                 )
                 errors["base"] = e.error_key
             else:
-                await self.async_set_unique_id(_unique_id(host, site))
-                self._abort_if_unique_id_mismatch(reason="wrong_console")
+                unique_id = config_unique_id(host, site)
+                known_mac = entry.data.get(CONF_GATEWAY_MAC)
+                if (
+                    unique_id != entry.unique_id
+                    and known_mac
+                    and gateway_mac
+                    and not same_mac(known_mac, gateway_mac)
+                ):
+                    return self.async_abort(reason="wrong_console")
+                if unique_id != entry.unique_id and _held_by_another(
+                    self.hass, entry, unique_id
+                ):
+                    return self.async_abort(reason="already_configured")
                 # Written to data and cleared from options, so the merged
                 # view cannot keep serving the address this replaces.
                 options = {
@@ -269,22 +328,27 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     for key, value in entry.options.items()
                     if key not in (CONF_HOST, CONF_SITE, CONF_API_KEY, CONF_VERIFY_SSL)
                 }
+                data_updates = {
+                    CONF_HOST: host,
+                    CONF_SITE: site,
+                    CONF_API_KEY: api_key,
+                    CONF_VERIFY_SSL: verify_ssl,
+                }
+                if gateway_mac:
+                    data_updates[CONF_GATEWAY_MAC] = gateway_mac
+                _async_expect_reload(entry)
                 return self.async_update_reload_and_abort(
                     entry,
+                    unique_id=unique_id,
                     title=f"UniFi WAN ({host})",
-                    data_updates={
-                        CONF_HOST: host,
-                        CONF_SITE: site,
-                        CONF_API_KEY: api_key,
-                        CONF_VERIFY_SSL: verify_ssl,
-                    },
+                    data_updates=data_updates,
                     options=options,
                 )
 
         current = {**entry.data, **entry.options}
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_connection_schema(user_input or current),
+            data_schema=vol.Schema(_connection_fields(user_input or current)),
             errors=errors,
         )
 
@@ -318,6 +382,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 new_options = dict(entry.options)
                 if CONF_API_KEY in new_options:
                     new_options[CONF_API_KEY] = api_key
+                _async_expect_reload(entry)
                 return self.async_update_reload_and_abort(
                     entry,
                     data_updates={CONF_API_KEY: api_key},
@@ -349,10 +414,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            host = _clean_host(user_input.get(CONF_HOST) or self._opt(CONF_HOST, ""))
+            host = normalise_host(user_input.get(CONF_HOST) or self._opt(CONF_HOST, ""))
             # An empty API key field means "keep the stored key"
             api_key = user_input.get(CONF_API_KEY) or self._opt(CONF_API_KEY, "")
-            site = user_input.get(CONF_SITE) or self._opt(CONF_SITE, DEFAULT_SITE)
+            site = normalise_site(
+                user_input.get(CONF_SITE) or self._opt(CONF_SITE, DEFAULT_SITE)
+            )
             verify_ssl = user_input.get(
                 CONF_VERIFY_SSL, self._opt(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             )
@@ -394,17 +461,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             )
 
             # Stored as the percentage that was typed; the fraction is
-            # derived where it is used.
-            tolerance_percent = (
-                speed_tolerance(
-                    user_input.get(
-                        CONF_SPEED_TOLERANCE,
-                        self._opt(
-                            CONF_SPEED_TOLERANCE, DEFAULT_SPEED_TOLERANCE_PERCENT
-                        ),
-                    )
+            # derived where it is used. Not through the fraction and back,
+            # which turned a typed 7 into 7.000000000000001.
+            tolerance_percent = speed_tolerance_percent(
+                user_input.get(
+                    CONF_SPEED_TOLERANCE,
+                    self._opt(CONF_SPEED_TOLERANCE, DEFAULT_SPEED_TOLERANCE_PERCENT),
                 )
-                * 100
             )
 
             new_options = {
@@ -451,12 +514,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         error key when another entry already holds the new identity.
         """
         entry = self.config_entry
-        unique_id = _unique_id(host, site)
+        unique_id = config_unique_id(host, site)
         if unique_id == entry.unique_id:
             return None
-        for other in self.hass.config_entries.async_entries(DOMAIN):
-            if other.entry_id != entry.entry_id and other.unique_id == unique_id:
-                return "already_configured"
+        if _held_by_another(self.hass, entry, unique_id):
+            return "already_configured"
         self.hass.config_entries.async_update_entry(
             entry, unique_id=unique_id, title=f"UniFi WAN ({host})"
         )

@@ -40,6 +40,10 @@ class UniFiWanRuntimeData:
     # fraction. Configured as a percentage.
     speed_tolerance: float
     reload_signature: dict[str, Any]
+    # Set by a flow that reloads the entry itself (reauth, reconfigure), so
+    # the update listener does not reload it a second time for the change
+    # that flow writes.
+    reload_pending: bool = False
 
 
 # Subscripted only for type checkers. ConfigEntry became generic in

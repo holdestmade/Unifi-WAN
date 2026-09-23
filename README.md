@@ -287,8 +287,14 @@ All options are available via the integration’s **Options** UI and can be chan
 
 Use this when the console moves to a new address or you change the site. It
 keeps every entity and its history, and moves the integration's own identity
-with it, so the same console cannot end up configured twice. The same fields
-appear under **Options**, which now follows a change the same way.
+with it, so the same console cannot end up configured twice. It follows the
+same gateway only: the gateway's MAC address is recorded when the integration
+starts, and an address that answers with a different gateway is refused, since
+that gateway's figures do not belong in this one's history. The speedtest
+schedule is not part of this form; change it under **Configure**.
+
+The address and site also appear under **Configure**, which moves the
+integration's identity the same way but does not check which gateway answers.
 
 Every request to the console times out after 30 seconds. A console that
 accepts the connection and then stops answering therefore delays one poll,

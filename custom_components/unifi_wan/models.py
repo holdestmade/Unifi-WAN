@@ -15,6 +15,7 @@ from typing import Any
 
 from .const import (
     DEFAULT_EXPECTED_SPEED,
+    DEFAULT_SITE,
     DEFAULT_SPEED_TOLERANCE_PERCENT,
     GATEWAY_DEVICES,
     GATEWAY_RESULT_MATCH_SECONDS,
@@ -207,14 +208,13 @@ def expected_speed(value: Any) -> float:
     return min(speed, MAX_EXPECTED_SPEED)
 
 
-def speed_tolerance(value: Any) -> float:
-    """A tolerance option, as the fraction the comparison uses.
+def speed_tolerance_percent(value: Any) -> float:
+    """A tolerance option as the percentage it is entered and stored as.
 
-    Entered as a percentage because that is how the band is thought
-    about, and clamped to something meaningful: past half the expected
-    figure the comparison stops saying anything. Zero is allowed and
-    means only an exact match counts, which is a real choice rather than
-    a way of switching the comparison off.
+    Clamped to something meaningful: past half the expected figure the
+    comparison stops saying anything. Zero is allowed and means only an
+    exact match counts, which is a real choice rather than a way of
+    switching the comparison off.
 
     Anything unreadable falls back to the default rather than to zero, so
     a mangled option does not silently turn every result into Faster or
@@ -224,10 +224,51 @@ def speed_tolerance(value: Any) -> float:
         percent = float(value)
     except (TypeError, ValueError):
         percent = DEFAULT_SPEED_TOLERANCE_PERCENT
-    percent = min(
-        max(percent, MIN_SPEED_TOLERANCE_PERCENT), MAX_SPEED_TOLERANCE_PERCENT
-    )
-    return percent / 100
+    return min(max(percent, MIN_SPEED_TOLERANCE_PERCENT), MAX_SPEED_TOLERANCE_PERCENT)
+
+
+def speed_tolerance(value: Any) -> float:
+    """A tolerance option, as the fraction the comparison uses.
+
+    Stored as a percentage, which is how the band is thought about; see
+    speed_tolerance_percent for how it is read.
+    """
+    return speed_tolerance_percent(value) / 100
+
+
+def normalise_host(host: Any) -> str:
+    """A console address as typed, reduced to the host alone.
+
+    Whitespace and any scheme are dropped, the name is lowercased and a
+    path is cut off, so "https://UDM.local/" and "udm.local" are one
+    console.
+    """
+    host = str(host or "").strip().lower()
+    host = host.removeprefix("https://").removeprefix("http://")
+    return host.split("/", 1)[0]
+
+
+def normalise_site(site: Any) -> str:
+    """A site name as typed, without the whitespace a paste brings along.
+
+    Validation always probed the stripped name, so a padded one passed and
+    then failed every poll; blank means the console's default site.
+    """
+    return str(site or "").strip() or DEFAULT_SITE
+
+
+def config_unique_id(host: Any, site: Any) -> str:
+    """One configured console and site, however its address was typed."""
+    return f"{normalise_host(host)}-{normalise_site(site)}"
+
+
+def same_mac(first: Any, second: Any) -> bool:
+    """Whether two MAC addresses name the same interface, in any spelling."""
+
+    def canonical(mac: Any) -> str:
+        return str(mac or "").strip().lower().replace("-", ":")
+
+    return bool(canonical(first)) and canonical(first) == canonical(second)
 
 
 def speed_comparison(

@@ -39,7 +39,9 @@ class UnifiWanClient:
         self._hass = hass
         self.host = (host or "").strip().rstrip("/")
         self.api_key = (api_key or "").strip()
-        self.site = site or DEFAULT_SITE
+        # Stripped here too, for an entry whose site was stored padded
+        # before the flows normalised it: the console has no " default ".
+        self.site = (site or "").strip() or DEFAULT_SITE
         self.verify_ssl = bool(verify_ssl)
         self._session = async_get_clientsession(hass, self.verify_ssl)
         # Set once the controller has told us it has no per-WAN speedtest

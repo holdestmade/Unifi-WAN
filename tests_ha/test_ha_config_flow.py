@@ -220,13 +220,9 @@ async def test_the_same_console_cannot_be_added_twice(
 async def test_a_site_typed_with_a_trailing_space_still_loads(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS: the site is validated stripped but stored as typed.
-
-    _async_validate strips the site before probing, so the flow accepts
-    " default ". The entry keeps the unstripped value, the client builds
-    its URLs from it, and every poll asks for site " default ", which the
-    console does not have: the entry never loads.
-    """
+    """The site used to be validated stripped and stored as typed, so
+    " default " passed the probe and then every poll asked the console for
+    a site it does not have."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
@@ -235,13 +231,13 @@ async def test_a_site_typed_with_a_trailing_space_still_loads(
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].data["site"] == "default"
     assert result["result"].state is ConfigEntryState.LOADED
 
 
 async def test_a_site_saved_with_a_trailing_space_in_options_still_loads(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS: the options dialog has the same strip-on-validate-only gap."""
     entry = await setup_entry(hass, make_entry(hass))
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
@@ -249,6 +245,7 @@ async def test_a_site_saved_with_a_trailing_space_in_options_still_loads(
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["site"] == "default"
     assert entry.state is ConfigEntryState.LOADED
 
 
@@ -256,12 +253,11 @@ async def test_a_site_saved_with_a_trailing_space_in_options_still_loads(
 async def test_an_entry_made_before_host_normalisation(
     hass: HomeAssistant, aioclient_mock, flow: str
 ) -> None:
-    """FAILS: entries whose unique id predates _unique_id never match it.
+    """Until the July restructure the unique id was the host as typed.
 
-    Until the July restructure the unique id was the host as typed, not
-    lowercased. Nothing migrates it, so for such an entry reconfigure's
-    unique-id comparison always fails, and the user step does not see it
-    as the same console.
+    Such an entry is migrated to the normalised id when it is set up, so
+    the user step recognises it as the console it is, and reconfigure,
+    which no longer compares unique ids, follows it like any other.
     """
     console = MockConsole(host="console.example")
     console.register(aioclient_mock)
@@ -273,10 +269,11 @@ async def test_an_entry_made_before_host_normalisation(
             unique_id="Console.Example-default",
         ),
     )
+    assert entry.unique_id == "console.example-default"
     if flow == "reconfigure":
         result = await entry.start_reconfigure_flow(hass)
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], user_input(host="Console.Example")
+            result["flow_id"], connection_input(host="Console.Example")
         )
         await hass.async_block_till_done()
         assert result["reason"] == "reconfigure_successful"
@@ -292,7 +289,50 @@ async def test_an_entry_made_before_host_normalisation(
         assert result["reason"] == "already_configured"
 
 
+async def test_an_older_entry_is_migrated_once(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    entry = make_entry(
+        hass,
+        data=entry_data(host=HOST.upper(), site=" default "),
+        options={"site": "default "},
+        unique_id=f"{HOST.upper()}- default ",
+    )
+    assert entry.minor_version == 1
+    await setup_entry(hass, entry)
+    assert entry.minor_version == 2
+    assert entry.unique_id == f"{HOST}-{SITE}"
+    assert entry.data["site"] == "default"
+    assert entry.options["site"] == "default"
+
+
+async def test_a_migration_that_would_collide_keeps_the_old_id(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """The duplicate the migration exists to prevent, already made."""
+    await setup_entry(hass, make_entry(hass))
+    duplicate = make_entry(hass, unique_id=f"{HOST.upper()}-{SITE}")
+    await setup_entry(hass, duplicate)
+    assert duplicate.minor_version == 2
+    assert duplicate.unique_id == f"{HOST.upper()}-{SITE}"
+
+
+async def test_setup_records_the_gateway_it_found(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    entry = await setup_entry(hass, make_entry(hass))
+    assert entry.data["gateway_mac"] == "aa:bb:cc:dd:ee:ff"
+
+
 # ----------------------------------------------------------- reconfigure
+
+
+def connection_input(**overrides: Any) -> dict[str, Any]:
+    """What the reconfigure form takes: the connection alone."""
+    data = user_input(**overrides)
+    for key in ("auto_speedtest", "auto_speedtest_minutes"):
+        data.pop(key)
+    return data
 
 
 async def _revoke_key_and_poll(hass: HomeAssistant, console: MockConsole, entry):
@@ -317,7 +357,7 @@ async def test_reconfigure_replaces_the_key_and_reloads(
     console.api_key = "rotated"
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input(api_key="rotated")
+        result["flow_id"], connection_input(api_key="rotated")
     )
     await hass.async_block_till_done()
 
@@ -336,65 +376,93 @@ async def test_reconfigure_replaces_the_key_and_reloads(
 async def test_reconfigure_follows_the_console_to_a_new_address(
     hass: HomeAssistant, console: MockConsole, aioclient_mock
 ) -> None:
-    """FAILS: reconfigure cannot change the address at all.
-
-    The step's docstring and its abort text both say it exists to follow
-    the same gateway to a new address. The unique id it compares is built
-    from the address, though, so any new host - or site - is a mismatch
-    and the flow aborts with wrong_console.
-    """
+    """Up to 1.11.0 the unique id compared here was built from the
+    address, so any new host was a "different console" and the step
+    that exists to follow a console to a new address always refused."""
     entry = await setup_entry(hass, make_entry(hass))
     moved = MockConsole(host=NEW_HOST)  # the same gateway, same MAC
     moved.register(aioclient_mock)
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input(host=NEW_HOST)
+        result["flow_id"], connection_input(host=NEW_HOST)
     )
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert entry.data["host"] == NEW_HOST
+    assert entry.unique_id == f"{NEW_HOST}-{SITE}"
+    assert entry.title == f"UniFi WAN ({NEW_HOST})"
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.host == NEW_HOST
 
 
-async def test_reconfigure_keeps_the_speedtest_fields_it_shows(
+async def test_reconfigure_follows_the_gateway_to_another_site(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS: the reconfigure form shows the auto-speedtest fields, then
-    drops whatever was entered in them.
-
-    It shares _connection_schema with the user step, which includes both
-    speedtest fields, but writes back only the four connection keys.
-    """
     entry = await setup_entry(hass, make_entry(hass))
+    console.site = "renamed"
     result = await entry.start_reconfigure_flow(hass)
-    shown = {str(key) for key in result["data_schema"].schema}
-    assert {"auto_speedtest", "auto_speedtest_minutes"} <= shown
-
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input(auto_speedtest=True, auto_speedtest_minutes=15),
+        result["flow_id"], connection_input(site="renamed")
     )
     await hass.async_block_till_done()
     assert result["reason"] == "reconfigure_successful"
-
-    effective = {**entry.data, **entry.options}
-    assert effective["auto_speedtest_minutes"] == 15
-    assert effective["auto_speedtest"] is True
+    assert entry.unique_id == f"{HOST}-renamed"
+    assert entry.state is ConfigEntryState.LOADED
 
 
-async def test_reconfigure_refuses_a_different_site(
+async def test_reconfigure_shows_only_what_it_saves(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
+    """The form used to show the speedtest schedule and drop whatever was
+    entered in it; those fields live in the options dialog."""
     entry = await setup_entry(hass, make_entry(hass))
-    console.site = "branch"
+    result = await entry.start_reconfigure_flow(hass)
+    shown = {str(key) for key in result["data_schema"].schema}
+    assert shown == {"host", "api_key", "site", "verify_ssl"}
+
+
+@pytest.mark.parametrize("change", ["host", "site"])
+async def test_reconfigure_refuses_a_different_gateway(
+    hass: HomeAssistant, console: MockConsole, aioclient_mock, change: str
+) -> None:
+    entry = await setup_entry(hass, make_entry(hass))
+    if change == "host":
+        other = MockConsole(host=NEW_HOST)
+        other.register(aioclient_mock)
+        submitted = connection_input(host=NEW_HOST)
+    else:
+        other = console
+        console.site = "branch"
+        submitted = connection_input(site="branch")
+    other.gateway["mac"] = "aa:bb:cc:00:00:02"
+
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input(site="branch")
+        result["flow_id"], submitted
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "wrong_console"
+    assert entry.data["host"] == HOST
+    assert entry.unique_id == f"{HOST}-{SITE}"
+
+
+async def test_reconfigure_refuses_an_address_another_entry_holds(
+    hass: HomeAssistant, console: MockConsole, aioclient_mock
+) -> None:
+    other = MockConsole(host=NEW_HOST)
+    other.register(aioclient_mock)
+    entry = await setup_entry(hass, make_entry(hass))
+    await setup_entry(hass, make_entry(hass, data=entry_data(host=NEW_HOST)))
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], connection_input(host=NEW_HOST)
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data["host"] == HOST
 
 
 async def test_reconfigure_with_a_bad_key_shows_the_error(
@@ -403,7 +471,7 @@ async def test_reconfigure_with_a_bad_key_shows_the_error(
     entry = await setup_entry(hass, make_entry(hass))
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input(api_key="wrong")
+        result["flow_id"], connection_input(api_key="wrong")
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
@@ -439,12 +507,9 @@ async def test_a_revoked_key_mid_session_is_replaced_by_reauth(
 async def test_a_successful_flow_reloads_the_entry_once(
     hass: HomeAssistant, console: MockConsole, setups: list[str], source: str
 ) -> None:
-    """FAILS: a successful reauth or reconfigure sets the entry up twice.
-
-    async_update_reload_and_abort schedules a reload itself, and the key
-    it writes also fires the entry's update listener, which sees the
-    reload signature changed and reloads the entry a second time.
-    """
+    """async_update_reload_and_abort schedules a reload itself, and the
+    change it writes used to fire the update listener into reloading the
+    entry a second time."""
     entry = await setup_entry(hass, make_entry(hass))
     if source == "reauth":
         flow = await _revoke_key_and_poll(hass, console, entry)
@@ -452,13 +517,35 @@ async def test_a_successful_flow_reloads_the_entry_once(
     else:
         console.api_key = "rotated"
         flow_id = (await entry.start_reconfigure_flow(hass))["flow_id"]
-        submitted = user_input(api_key="rotated")
+        submitted = connection_input(api_key="rotated")
     setups.clear()
 
     result = await hass.config_entries.flow.async_configure(flow_id, submitted)
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.ABORT
     assert setups == [entry.entry_id]
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.reload_pending is False
+
+
+async def test_a_reauth_with_the_same_key_still_reloads(
+    hass: HomeAssistant, console: MockConsole, setups: list[str]
+) -> None:
+    """The console refused the key for a while and took it back. The poll
+    stops at an auth failure, so the reload is what restarts it."""
+    entry = await setup_entry(hass, make_entry(hass))
+    console.status["stat/device"] = 401
+    await entry.runtime_data.device_coordinator.async_refresh()
+    await hass.async_block_till_done()
+    [flow] = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    del console.status["stat/device"]
+    setups.clear()
+    await hass.config_entries.flow.async_configure(
+        flow["flow_id"], {"api_key": API_KEY}
+    )
+    await hass.async_block_till_done()
+    assert setups == [entry.entry_id]
+    assert entry.runtime_data.device_coordinator.last_update_success
 
 
 async def test_reauth_updates_a_key_the_options_dialog_stored(
@@ -532,6 +619,16 @@ async def test_options_are_saved_and_applied_by_a_reload(
         "sensor", DOMAIN, f"{entry.entry_id}_wan_down_mbps"
     )
     assert hass.states.get(rate).state == "10.0"
+
+
+async def test_the_tolerance_is_stored_as_typed(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """Not through the fraction and back: 7 used to become 7.000000000000001."""
+    entry = await setup_entry(hass, make_entry(hass))
+    await _submit_options(hass, entry, speed_tolerance_percent=7)
+    assert entry.options["speed_tolerance_percent"] == 7.0
+    assert entry.runtime_data.speed_tolerance == 0.07
 
 
 async def test_changing_only_the_auto_setting_does_not_reload(

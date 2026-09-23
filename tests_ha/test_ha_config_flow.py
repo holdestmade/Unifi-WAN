@@ -238,6 +238,60 @@ async def test_a_site_typed_with_a_trailing_space_still_loads(
     assert result["result"].state is ConfigEntryState.LOADED
 
 
+async def test_a_site_saved_with_a_trailing_space_in_options_still_loads(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """FAILS: the options dialog has the same strip-on-validate-only gap."""
+    entry = await setup_entry(hass, make_entry(hass))
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"site": "default "}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.state is ConfigEntryState.LOADED
+
+
+@pytest.mark.parametrize("flow", ["reconfigure", "add again"])
+async def test_an_entry_made_before_host_normalisation(
+    hass: HomeAssistant, aioclient_mock, flow: str
+) -> None:
+    """FAILS: entries whose unique id predates _unique_id never match it.
+
+    Until the July restructure the unique id was the host as typed, not
+    lowercased. Nothing migrates it, so for such an entry reconfigure's
+    unique-id comparison always fails, and the user step does not see it
+    as the same console.
+    """
+    console = MockConsole(host="console.example")
+    console.register(aioclient_mock)
+    entry = await setup_entry(
+        hass,
+        make_entry(
+            hass,
+            data=entry_data(host="Console.Example"),
+            unique_id="Console.Example-default",
+        ),
+    )
+    if flow == "reconfigure":
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input(host="Console.Example")
+        )
+        await hass.async_block_till_done()
+        assert result["reason"] == "reconfigure_successful"
+    else:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input(host="Console.Example")
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+
+
 # ----------------------------------------------------------- reconfigure
 
 

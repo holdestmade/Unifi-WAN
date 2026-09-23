@@ -171,6 +171,8 @@ Leave either at `0` and its pair of sensors reports `unknown`. The sensors are a
 
 **WAN identification**
 
+Every WAN sensor reads the site's gateway, so that is picked first: a known UniFi gateway model that is routing the site's traffic. A console of a gateway model running as something else — a UniFi Express set up as a mesh access point, say, which still reports itself as the same kind of device as a UDR — is passed over for the device that reports the site's WANs. If the WANs look wrong, **Download diagnostics** lists every other device with its mode and which WAN blocks it reports, which is usually enough to see which one was taken.
+
 - **UniFi Active WAN ID**  
   - Logical ID of the active WAN (e.g. `WAN1`), or `Unknown`  
   - Derived by matching the uplink IP against each WAN section, then the uplink interface name against each WAN section's, then falling back to the only WAN that is up  

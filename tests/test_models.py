@@ -154,6 +154,87 @@ def test_adopted_gateway_with_an_uplink_wins():
     assert find_gateway(devices)["model"] == "live"
 
 
+def express_in_mesh_mode() -> dict:
+    """A UniFi Express 7 set up as a mesh access point, as issue #68's
+    console reported it: the gateway's own "udm" type, its uplink a LAN
+    port on a switch, and a WAN section for the 5G backup's tunnel."""
+    return {
+        "type": "udm",
+        "model": "UDMA69B",
+        "adopted": True,
+        "device_mode_override": "mesh",
+        "is_access_point": True,
+        "uplink_depth": 1,
+        "uplink": {
+            "comment": "LAN",
+            "name": "eth0",
+            "up": True,
+            "type": "wire",
+            "uplink_depth": 2,
+        },
+        "wan3": {
+            "name": "gre1",
+            "ifname": "gre1",
+            "up": True,
+            "type": "wireless_5g",
+        },
+        "speedtest-status": {"rundate": 0, "xput_download": 0.0},
+    }
+
+
+def udr7_with_5g_backup() -> dict:
+    """The site's real gateway in that report: a UDR7 with a wired WAN1
+    and the 5G backup as WAN3."""
+    return {
+        "type": "udm",
+        "model": "UDMA67A",
+        "adopted": True,
+        "uplink": {"up": True, "ip": "198.51.100.20", "name": "eth3"},
+        "wan1": {"up": True, "ip": "198.51.100.20", "ifname": "eth3"},
+        "wan3": {"up": True, "ip": "10.64.0.2", "ifname": "gre1"},
+        "last_wan_interfaces": {"WAN": {"alive": True}, "WAN3": {"alive": True}},
+    }
+
+
+def test_an_express_in_mesh_mode_is_not_taken_for_the_gateway():
+    """Issue #68: both report "udm", both are adopted with an uplink, and
+    the Express came first in the list - so it was taken, with its one
+    tunnel section for a WAN, and WAN3 read as the only line up."""
+    gateway = find_gateway([express_in_mesh_mode(), udr7_with_5g_backup()])
+    assert gateway["model"] == "UDMA67A"
+
+    data = extract_wan_data({"data": [express_in_mesh_mode(), udr7_with_5g_backup()]})
+    assert sorted(data.wan) == [1, 3]
+    assert data.active_wan == (1, "uplink_ip")
+
+
+def test_a_mesh_express_does_not_outrank_another_gateway_model():
+    """ "udm" heads the model list, so type order alone put an Express
+    ahead of the UCG that routes the site."""
+    ucg = {**udr7_with_5g_backup(), "type": "ucg-ultra", "model": "UCGULTRA"}
+    assert find_gateway([express_in_mesh_mode(), ucg])["model"] == "UCGULTRA"
+
+
+def test_wan_status_tells_two_routers_apart_without_a_mode():
+    """Firmware that names no device mode: the device reporting its WANs,
+    and not sitting behind another device, is the gateway."""
+    express = express_in_mesh_mode()
+    del express["device_mode_override"]
+    assert find_gateway([express, udr7_with_5g_backup()])["model"] == "UDMA67A"
+
+
+def test_a_new_gateway_model_wins_over_a_mesh_express():
+    new_model = {**udr7_with_5g_backup(), "type": "brand-new-thing"}
+    assert find_gateway([express_in_mesh_mode(), new_model])["type"] == (
+        "brand-new-thing"
+    )
+
+
+def test_a_mesh_express_is_used_when_nothing_else_could_be_the_gateway():
+    """Better than no gateway at all, which fails setup outright."""
+    assert find_gateway([express_in_mesh_mode()])["model"] == "UDMA69B"
+
+
 # ------------------------------------------------------------- WAN sections
 
 

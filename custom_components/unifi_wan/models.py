@@ -564,36 +564,99 @@ def _looks_like_gateway(device: dict[str, Any]) -> bool:
     )
 
 
-def find_gateway(devices: list[dict]) -> dict[str, Any] | None:
-    """The site's gateway, by model first and by shape second.
+# device_mode_override values under which a gateway-class console is not
+# routing at all. A UniFi Express set up as a mesh access point for another
+# gateway reports "mesh", and keeps the gateway "type" it reports as a
+# router, so its type alone cannot tell it from the site's real gateway.
+_NOT_ROUTING_MODES: frozenset[str] = frozenset({"mesh", "ap"})
 
-    An adopted device with an uplink wins over one without, so a console
+
+def _in_access_point_mode(device: dict[str, Any]) -> bool:
+    """Whether the device says it is running as an access point."""
+    mode = str(device.get("device_mode_override") or "").strip().lower()
+    return mode in _NOT_ROUTING_MODES
+
+
+def _reports_wan_status(device: dict[str, Any]) -> bool:
+    """Whether the device reports the WAN state a routing gateway keeps.
+
+    A table of its WAN interfaces, or a section for its first WAN. Not any
+    WAN section: an Express in mesh mode reports one for a 5G backup's
+    tunnel ("wan3") while routing nothing itself.
+    """
+    table = device.get("last_wan_interfaces")
+    if isinstance(table, dict) and table:
+        return True
+    return isinstance(device.get("wan1") or device.get("wan"), dict)
+
+
+def _is_downstream(device: dict[str, Any]) -> bool:
+    """Whether the controller places the device behind another one.
+
+    uplink_depth counts the hops back to the gateway, so the gateway itself
+    has none.
+    """
+    depth = device.get("uplink_depth")
+    return isinstance(depth, int) and not isinstance(depth, bool) and depth > 0
+
+
+def _gateway_rank(device: dict[str, Any]) -> tuple[Any, ...]:
+    """How unlikely a device is to be the site's gateway; lowest wins.
+
+    Evidence of routing comes before the model list: the list only says a
+    device is capable of being the gateway, and a site can hold several
+    that are - an Express in mesh mode beside a UDR, say, both "udm".
+    An adopted device with an uplink still beats one without, so a console
     holding a record of a gateway it no longer manages does not displace
     the live one.
     """
+    kind = device.get("type")
+    return (
+        not device.get("adopted", True),
+        _in_access_point_mode(device),
+        not _reports_wan_status(device),
+        _is_downstream(device),
+        GATEWAY_DEVICES.index(kind)
+        if kind in GATEWAY_DEVICES
+        else len(GATEWAY_DEVICES),
+        "uplink" not in device,
+    )
 
-    def best(candidates: list[dict[str, Any]]) -> dict[str, Any]:
-        return sorted(
-            candidates, key=lambda d: (not d.get("adopted", True), "uplink" not in d)
-        )[0]
 
+def find_gateway(devices: list[dict]) -> dict[str, Any] | None:
+    """The site's gateway: a known gateway model routing traffic, or failing
+    that a device shaped like one.
+
+    A known model running as an access point is only taken when nothing
+    else could be the gateway, which keeps a site whose gateway is too new
+    for the model list working when it also has an Express in mesh mode.
+    """
     dicts = [d for d in devices if isinstance(d, dict)]
-    for gateway_type in GATEWAY_DEVICES:
-        candidates = [d for d in dicts if d.get("type") == gateway_type]
-        if candidates:
-            return best(candidates)
+    known = [d for d in dicts if d.get("type") in GATEWAY_DEVICES]
+    best_known = min(known, key=_gateway_rank) if known else None
+    if best_known is not None and not _in_access_point_mode(best_known):
+        return best_known
 
-    shaped = [d for d in dicts if _looks_like_gateway(d)]
+    # By identity: comparing device payloads by value would walk every
+    # field of every device on the site, on every poll.
+    known_ids = {id(d) for d in known}
+    shaped = [
+        d
+        for d in dicts
+        if id(d) not in known_ids
+        and _looks_like_gateway(d)
+        and not _in_access_point_mode(d)
+    ]
     if shaped:
-        gateway = best(shaped)
+        gateway = min(shaped, key=_gateway_rank)
         _LOGGER.debug(
-            "No device matched a known gateway type; using %r (type %r), which "
-            "reports an uplink and WAN interfaces",
+            "No routing device matched a known gateway type; using %r (type %r), "
+            "which reports an uplink and WAN interfaces",
             gateway.get("model"),
             gateway.get("type"),
         )
         return gateway
-    return None
+    return best_known
 
 
 def _wan_numbers_from(

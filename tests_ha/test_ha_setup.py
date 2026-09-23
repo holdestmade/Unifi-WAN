@@ -62,8 +62,9 @@ async def test_a_two_wan_gateway_sets_up_every_platform(
     switch = hass.states.get(entity_id(hass, "switch", entry, "auto_speedtest_enabled"))
     assert switch.state == "off"
 
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry.entry_id)})
-    assert device is not None
+    # Looked up by config entry: async_get_device raises on 2026.9 and later.
+    [device] = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert device.identifiers == {(DOMAIN, entry.entry_id)}
     assert device.model == "UDMPRO"
     assert device.sw_version == "4.0.6"
 

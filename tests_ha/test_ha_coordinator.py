@@ -103,12 +103,11 @@ async def test_a_failed_history_fetch_reuses_the_last_records(
 async def test_per_wan_sensors_show_the_history_as_soon_as_they_exist(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS: the first poll's per-WAN records are not applied.
+    """Setup's first refresh runs before the speedtest manager listens.
 
-    Setup's first refresh runs before the speedtest manager is listening,
-    so the records it fetched are only attributed on the next poll - one
-    scan interval of "unknown" on every start, even though the console
-    answered with WAN2's result.
+    Its records used to wait for the next poll to be attributed - a scan
+    interval of "unknown" on every start, although the console had
+    already answered with WAN2's result.
     """
     console.history["data"].append(history_record("WAN2", T0 + 60, 90.0, 9.0))
     entry = await setup_entry(hass, make_entry(hass))
@@ -146,17 +145,13 @@ async def test_a_half_written_gateway_block_is_completed_on_the_next_poll(
 async def test_per_wan_results_survive_a_restart(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
-    """FAILS: per-WAN speedtest sensors never restore their value.
+    """Per-WAN speedtest sensors restore their value across a restart.
 
-    UniFiWanSpeedtestSensor overrides extra_restore_state_data to store
-    only {"version", "source"}. RestoreSensor.async_get_last_sensor_data
-    rebuilds a SensorExtraStoredData from that same dict and needs its
-    native_value key, finds none, and returns None - so the trusted,
-    correctly-versioned data is read back as no value at all.
-
-    On a console without the per-WAN API nothing re-reads the result
-    after a restart, so the sensor stays unknown until that WAN is tested
-    again.
+    Up to 1.11.0 the entity stored only {"version", "source"}, and
+    RestoreSensor.async_get_last_sensor_data, which needs native_value in
+    that same dict, read it back as nothing. On a console without the
+    per-WAN API nothing re-reads the result after a restart, so the
+    sensor sat at unknown until that WAN was tested again.
     """
     console.history = None
     entry = await setup_entry(hass, make_entry(hass))
@@ -164,14 +159,24 @@ async def test_per_wan_results_survive_a_restart(
     await poll(hass, entry)
     wan2 = entity_id(hass, "sensor", entry, "wan2_speedtest_down")
     assert hass.states.get(wan2).state == "300.0"
+    # A timestamp takes the other serialisation path, as a tagged dict.
+    last_run = entity_id(hass, "sensor", entry, "wan2_speedtest_last_run")
+    when = hass.states.get(last_run).state
+    assert when.startswith("2025-10-09T")
+    server = entity_id(hass, "sensor", entry, "wan2_speedtest_server_provider")
 
     stored = await async_mock_restore_state_shutdown_restart(hass)
     extra = stored.last_states[wan2].extra_data.as_dict()
-    assert extra == {"version": 2, "source": "source_interface"}, extra
+    assert extra["native_value"] == 300.0, extra
+    assert extra["version"] == 2
+    assert extra["source"] == "source_interface"
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert hass.states.get(wan2).state == "300.0"
+    assert hass.states.get(last_run).state == when
+    assert hass.states.get(server).state == "ExampleNet"
+    assert hass.states.get(wan2).attributes["restored"] is True
 
 
 @pytest.mark.parametrize(
@@ -179,9 +184,7 @@ async def test_per_wan_results_survive_a_restart(
     [
         # Written before ATTRIBUTION_VERSION 2: deliberately not trusted.
         ({"native_value": 123.0, "native_unit_of_measurement": "Mbit/s"}, "unknown"),
-        # What the entity would need to have stored for restore to work.
-        # The reading side accepts it, which puts the fault in what the
-        # entity writes rather than in how it reads.
+        # What the entity stores: its value, stamped with the version.
         (
             {
                 "version": 2,

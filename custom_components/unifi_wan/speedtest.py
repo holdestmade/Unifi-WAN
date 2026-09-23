@@ -114,6 +114,12 @@ class SpeedtestManager:
             self.coordinator.async_add_listener(self._process_result)
         )
         self.entry.async_on_unload(self.async_shutdown)
+        # The first refresh ran before this listener existed. Applied now,
+        # before the platforms are set up, so the per-WAN sensors start
+        # with the records it fetched rather than a scan interval of
+        # nothing. The gateway's own block is not re-attributed: it was
+        # seeded above as already seen.
+        self._process_result()
         self.schedule_auto(self.auto_enabled)
 
     @callback

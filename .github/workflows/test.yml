@@ -35,17 +35,36 @@ jobs:
         run: pytest -q
 
   test-core:
-    name: Pytest (running core)
+    name: Pytest (running core ${{ matrix.core }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pytest-homeassistant-custom-component pins the core it was built
+        # against, so each row pins it: the oldest core hacs.json supports,
+        # the last one for Python 3.13, and the current one.
+        include:
+          - core: "2025.10"
+            python: "3.13"
+            phcc: "0.13.289"
+            # That core's aiodns predates pycares 5.
+            extra: '"pycares<5"'
+          - core: "2026.2"
+            python: "3.13"
+            phcc: "0.13.316"
+            extra: ""
+          - core: "2026.9"
+            python: "3.14"
+            phcc: "0.13.366"
+            extra: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-      # tests_ha/ sets entries up through Home Assistant itself, so it needs
-      # pytest-homeassistant-custom-component and the core release it pins.
+          python-version: ${{ matrix.python }}
+      # tests_ha/ sets entries up through Home Assistant itself.
       - name: Install
-        run: pip install -r requirements-test-ha.txt
+        run: pip install "pytest-homeassistant-custom-component==${{ matrix.phcc }}" ${{ matrix.extra }}
       # The timeout turns a speedtest wait that never ends into a failure
       # rather than a job that runs until GitHub kills it.
       - name: Run tests

@@ -109,10 +109,10 @@ DUMP_SIZE_WARN_BYTES: Final = 20 * 1024 * 1024
 # connection but never answers stalls a poll for that long.
 REQUEST_TIMEOUT_SECONDS: Final = 30
 
-# How many fast rate polls in a row may fail before the rate sensors are
-# marked unavailable. Before that the last rates stand, so one slow answer
-# from the console is not reported as an outage.
-RATES_MISSED_POLLS_TOLERATED: Final = 1
+# How many polls in a row may fail before their sensors are marked
+# unavailable. Before that the last data stands, so one slow answer from
+# the console is not reported as an outage. Applies to each poll on its own.
+MISSED_POLLS_TOLERATED: Final = 1
 
 # Statuses that mean "this console does not offer that endpoint", as
 # opposed to a request that simply failed. Only these are evidence worth

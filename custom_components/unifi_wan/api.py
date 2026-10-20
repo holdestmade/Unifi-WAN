@@ -85,8 +85,16 @@ class UnifiWanClient:
                 return await resp.json(content_type=None)
         except (ConfigEntryAuthFailed, UpdateFailed):
             raise
+        except TimeoutError as e:
+            # aiohttp raises a bare TimeoutError with no message of its own,
+            # which left the log reading "Connection error: " and nothing more.
+            raise UpdateFailed(
+                f"Timed out after {REQUEST_TIMEOUT_SECONDS}s waiting for {path}"
+            ) from e
         except Exception as e:
-            raise UpdateFailed(f"Connection error: {e}") from e
+            raise UpdateFailed(
+                f"Connection error for {path}: {type(e).__name__}: {e}"
+            ) from e
 
     @staticmethod
     def _api_error(body: Any) -> str | None:

@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import UnifiWanClient
-from .const import DOMAIN
+from .const import DOMAIN, RATES_MISSED_POLLS_TOLERATED
 from .models import (
     UniFiWanData,
     extract_rates,
@@ -130,6 +130,29 @@ class UniFiWanRatesCoordinator(DataUpdateCoordinator[UniFiWanData]):
         )
         self.client = client
         self.mac = mac
+        self._missed_polls = 0
 
     async def _async_update_data(self) -> UniFiWanData:
-        return extract_rates(await self.client.get_device(self.mac))
+        """Fetch the gateway's rates, riding out a single missed poll.
+
+        At this rate the odd request that the console is slow to answer is
+        expected rather than an outage, and failing on it marks every rate
+        sensor unavailable and logs an error for a gap of a few seconds.
+        So the last rates stand for a missed poll or two, and only a run
+        of them is reported - which still surfaces a console that is down.
+        """
+        try:
+            data = extract_rates(await self.client.get_device(self.mac))
+        except UpdateFailed as err:
+            self._missed_polls += 1
+            if self.data is None or self._missed_polls > RATES_MISSED_POLLS_TOLERATED:
+                raise
+            _LOGGER.debug(
+                "Rates poll missed (%s of %s tolerated): %s",
+                self._missed_polls,
+                RATES_MISSED_POLLS_TOLERATED,
+                err,
+            )
+            return self.data
+        self._missed_polls = 0
+        return data

@@ -244,3 +244,33 @@ async def test_a_mesh_express_listed_first_is_not_the_gateway(
     )
     for key in ("run_speedtest_wan1", "run_speedtest_wan3"):
         assert hass.states.get(entity_id(hass, "button", entry, key)) is not None
+
+
+async def test_the_rate_sensors_ride_out_one_missed_fast_poll(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """A console slow to answer one request every so often is not an
+    outage: the last rates stand until a second poll in a row fails.
+    """
+    entry = await setup_entry(hass, make_entry(hass))
+    rates = entry.runtime_data.rates_coordinator
+    rate = entity_id(hass, "sensor", entry, "wan_down_mbps")
+
+    console.raises[f"stat/device/{MAC}"] = TimeoutError()
+    await rates.async_refresh()
+    await hass.async_block_till_done()
+    assert rates.last_update_success
+    assert hass.states.get(rate).state == "10.0"
+
+    await rates.async_refresh()
+    await hass.async_block_till_done()
+    assert not rates.last_update_success
+    assert hass.states.get(rate).state == "unavailable"
+
+    # A success resets the count, so the next miss is tolerated again.
+    del console.raises[f"stat/device/{MAC}"]
+    await rates.async_refresh()
+    console.raises[f"stat/device/{MAC}"] = TimeoutError()
+    await rates.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(rate).state == "10.0"

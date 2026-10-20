@@ -35,6 +35,28 @@ async def test_every_request_carries_a_timeout(call):
     assert client._session.timeouts[0].total == 30
 
 
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (TimeoutError(), "Timed out after 30s waiting for stat/device"),
+        (
+            ConnectionResetError(),
+            "Connection error for stat/device: ConnectionResetError: ",
+        ),
+    ],
+    ids=["timeout", "reset"],
+)
+async def test_a_failed_get_says_what_went_wrong(error, expected):
+    """aiohttp's timeout carries no message, so the error has to name it:
+    otherwise the log reads "Connection error: " and stops there.
+    """
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    with pytest.raises(UpdateFailed) as raised:
+        await make_client([error]).get_json("stat/device")
+    assert str(raised.value) == expected
+
+
 # ------------------------------------------------------------- command sent
 
 

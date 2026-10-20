@@ -48,11 +48,15 @@ async def poll(hass: HomeAssistant, entry) -> None:
 # --------------------------------------------------------------- the poll
 
 
-async def test_a_failed_poll_marks_entities_unavailable_until_it_recovers(
+async def test_failed_polls_mark_entities_unavailable_until_it_recovers(
     hass: HomeAssistant, console: MockConsole
 ) -> None:
+    """One miss is ridden out; the second in a row is reported."""
     entry = await setup_entry(hass, make_entry(hass))
     console.status["stat/device"] = 503
+    await poll(hass, entry)
+    assert entry.runtime_data.device_coordinator.last_update_success
+    assert state(hass, entry, "wan_ipv4") == "203.0.113.1"
     await poll(hass, entry)
     assert state(hass, entry, "wan_ipv4") == "unavailable"
     del console.status["stat/device"]
@@ -301,3 +305,25 @@ async def test_diagnostics_download_is_redacted_and_serialisable(
         }
     ]
     assert HOST not in str(diagnostics)
+
+
+async def test_a_site_poll_that_times_out_once_is_ridden_out(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """The console is slow to answer stat/device now and then: the sensors
+    keep the last poll's values rather than going unavailable for it.
+    """
+    entry = await setup_entry(hass, make_entry(hass))
+    coordinator = entry.runtime_data.device_coordinator
+    console.raises["stat/device"] = TimeoutError()
+    await poll(hass, entry)
+    assert coordinator.last_update_success
+    assert state(hass, entry, "wan_ipv4") == "203.0.113.1"
+
+    # A success resets the count, so a later single miss is ridden out too.
+    del console.raises["stat/device"]
+    await poll(hass, entry)
+    console.raises["stat/device"] = TimeoutError()
+    await poll(hass, entry)
+    assert coordinator.last_update_success
+    assert state(hass, entry, "wan_ipv4") == "203.0.113.1"

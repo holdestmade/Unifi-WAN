@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import UnifiWanClient
-from .const import DOMAIN, RATES_MISSED_POLLS_TOLERATED
+from .const import DOMAIN, MISSED_POLLS_TOLERATED
 from .models import (
     UniFiWanData,
     extract_rates,
@@ -30,7 +30,44 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-class UniFiWanCoordinator(DataUpdateCoordinator[UniFiWanData]):
+class _MissTolerantCoordinator(DataUpdateCoordinator[UniFiWanData]):
+    """A poll that rides out a single missed fetch.
+
+    The console is slow to answer the odd request - long enough to hit the
+    request timeout - without being down, and failing on that marks every
+    sensor the poll feeds unavailable and logs an error for one gap. So the
+    last data stands for up to MISSED_POLLS_TOLERATED failures in a row,
+    and only a run longer than that is reported, which still surfaces a
+    console that is down. An authentication failure is not an
+    UpdateFailed, so it is never ridden out; nor is a failed first fetch,
+    which has no earlier data to stand in for it.
+    """
+
+    _missed_polls = 0
+
+    async def _async_fetch(self) -> UniFiWanData:
+        raise NotImplementedError
+
+    async def _async_update_data(self) -> UniFiWanData:
+        try:
+            data = await self._async_fetch()
+        except UpdateFailed as err:
+            self._missed_polls += 1
+            if self.data is None or self._missed_polls > MISSED_POLLS_TOLERATED:
+                raise
+            _LOGGER.debug(
+                "%s poll missed (%s of %s tolerated): %s",
+                self.name,
+                self._missed_polls,
+                MISSED_POLLS_TOLERATED,
+                err,
+            )
+            return self.data
+        self._missed_polls = 0
+        return data
+
+
+class UniFiWanCoordinator(_MissTolerantCoordinator):
     """Full site poll: the gateway's own payload and the per-WAN speedtest
     records, parsed into the shape every sensor reads.
     """
@@ -67,7 +104,7 @@ class UniFiWanCoordinator(DataUpdateCoordinator[UniFiWanData]):
         # would then defend the wrong record against the next correct one.
         self._last_history: dict[str, Any] | None = None
 
-    async def _async_update_data(self) -> UniFiWanData:
+    async def _async_fetch(self) -> UniFiWanData:
         """Fetch and process data.
 
         The two endpoints are independent, so they are fetched together:
@@ -104,7 +141,7 @@ class UniFiWanCoordinator(DataUpdateCoordinator[UniFiWanData]):
         return data
 
 
-class UniFiWanRatesCoordinator(DataUpdateCoordinator[UniFiWanData]):
+class UniFiWanRatesCoordinator(_MissTolerantCoordinator):
     """Fast poll of the gateway alone, behind the live WAN rate sensors.
 
     Runs as often as once a second, so it parses only as far as those
@@ -130,29 +167,6 @@ class UniFiWanRatesCoordinator(DataUpdateCoordinator[UniFiWanData]):
         )
         self.client = client
         self.mac = mac
-        self._missed_polls = 0
 
-    async def _async_update_data(self) -> UniFiWanData:
-        """Fetch the gateway's rates, riding out a single missed poll.
-
-        At this rate the odd request that the console is slow to answer is
-        expected rather than an outage, and failing on it marks every rate
-        sensor unavailable and logs an error for a gap of a few seconds.
-        So the last rates stand for a missed poll or two, and only a run
-        of them is reported - which still surfaces a console that is down.
-        """
-        try:
-            data = extract_rates(await self.client.get_device(self.mac))
-        except UpdateFailed as err:
-            self._missed_polls += 1
-            if self.data is None or self._missed_polls > RATES_MISSED_POLLS_TOLERATED:
-                raise
-            _LOGGER.debug(
-                "Rates poll missed (%s of %s tolerated): %s",
-                self._missed_polls,
-                RATES_MISSED_POLLS_TOLERATED,
-                err,
-            )
-            return self.data
-        self._missed_polls = 0
-        return data
+    async def _async_fetch(self) -> UniFiWanData:
+        return extract_rates(await self.client.get_device(self.mac))

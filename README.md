@@ -394,14 +394,33 @@ pytest
 ruff check custom_components tests
 ```
 
-GitHub Actions runs those plus `hassfest` and HACS validation on every push
+GitHub Actions runs those plus `hassfest` and HACS/Marketplace validation on every push
 and pull request.
 
 ---
 
 ## Install
 
-### HACS
+### Marketplace (Home Assistant 2026.11 and newer)
+
+Home Assistant 2026.11 replaces HACS with the built-in **Marketplace**. If you
+installed UniFi WAN through HACS, the Marketplace takes it over on upgrade, and
+you don't need to do anything.
+
+For a new install:
+
+[![Open your Home Assistant instance and open this repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=holdestmade&repository=Unifi-WAN&category=integration)
+
+Or add it by hand:
+
+1. Open **Settings → Marketplace** and add this repository as a custom repository:
+   `https://github.com/holdestmade/Unifi-WAN` (category **Integration**).
+   Custom repositories need the Marketplace to be connected to GitHub, and it
+   asks you to connect the first time.
+2. Find **UniFi WAN** in the Marketplace and install it.
+3. Restart Home Assistant if a repair asks you to.
+
+### HACS (Home Assistant before 2026.11)
 
 1. Add this repository as a custom repository in HACS  
    `https://github.com/holdestmade/Unifi-WAN`

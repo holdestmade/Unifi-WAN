@@ -18,6 +18,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: home-assistant/actions/hassfest@master
 
+  # From Home Assistant 2026.11 the built-in Marketplace replaces HACS. It
+  # still reads hacs.json and the hacs/default catalog, so this check still
+  # covers what the Marketplace needs.
   hacs:
     name: HACS
     runs-on: ubuntu-latest
@@ -28,6 +31,7 @@ jobs:
           category: integration
           # The brands check requires the domain to be registered in
           # home-assistant/brands, which is for integrations shipped with
-          # Home Assistant. This one is installed as a HACS custom
-          # repository and carries its own icon under brand/.
+          # Home Assistant. This one is installed as a custom repository
+          # (HACS, or the Marketplace from 2026.11) and carries its own icon
+          # under brand/.
           ignore: brands

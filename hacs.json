@@ -1,6 +1,5 @@
 {
-  "name": "Unifi WAN",
+  "name": "UniFi WAN",
   "render_readme": true,
-  "country": "GB",
   "homeassistant": "2025.10.0"
 }

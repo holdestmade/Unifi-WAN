@@ -41,21 +41,18 @@ jobs:
       fail-fast: false
       matrix:
         # pytest-homeassistant-custom-component pins the core it was built
-        # against, so each row pins it: the oldest core hacs.json supports,
-        # the last one for Python 3.13, and the current one.
+        # against, so each row pins it: the oldest core hacs.json supports
+        # (which also covers Python 3.13) and the newest one the plugin has
+        # been released for. Move the newest row up as new cores come out.
         include:
           - core: "2025.10"
             python: "3.13"
             phcc: "0.13.289"
             # That core's aiodns predates pycares 5.
             extra: '"pycares<5"'
-          - core: "2026.2"
-            python: "3.13"
-            phcc: "0.13.316"
-            extra: ""
-          - core: "2026.9"
+          - core: "2026.10"
             python: "3.14"
-            phcc: "0.13.366"
+            phcc: "0.13.375"
             extra: ""
     steps:
       - uses: actions/checkout@v4

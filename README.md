@@ -1,3 +1,5 @@
+[![Release](https://img.shields.io/github/v/release/holdestmade/Unifi-WAN)](https://github.com/holdestmade/Unifi-WAN/releases/latest)
+[![Marketplace | HACS](https://img.shields.io/badge/Marketplace%20%7C%20HACS-Default-41BDF5)](#install)
 [![AI Assisted](https://img.shields.io/badge/AI--assisted-Claude-8A2BE2?logo=anthropic&logoColor=white)](#ai-disclosure)
 
 # UniFi WAN

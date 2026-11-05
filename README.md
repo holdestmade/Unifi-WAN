@@ -407,25 +407,27 @@ Home Assistant 2026.11 replaces HACS with the built-in **Marketplace**. If you
 installed UniFi WAN through HACS, the Marketplace takes it over on upgrade, and
 you don't need to do anything.
 
-For a new install:
+For a new install, open **Settings → Marketplace**, search for **UniFi WAN**
+and install it, or use this button:
 
 [![Open your Home Assistant instance and open this repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=holdestmade&repository=Unifi-WAN&category=integration)
 
-Or add it by hand:
+Restart Home Assistant if a repair asks you to.
 
-1. Open **Settings → Marketplace** and add this repository as a custom repository:
-   `https://github.com/holdestmade/Unifi-WAN` (category **Integration**).
-   Custom repositories need the Marketplace to be connected to GitHub, and it
-   asks you to connect the first time.
-2. Find **UniFi WAN** in the Marketplace and install it.
-3. Restart Home Assistant if a repair asks you to.
+If **UniFi WAN** doesn't show up in the search, add it as a custom repository
+instead: in **Settings → Marketplace**, add
+`https://github.com/holdestmade/Unifi-WAN` (category **Integration**), then
+install it from there. Custom repositories need the Marketplace to be connected
+to GitHub, and it asks you to connect the first time.
 
 ### HACS (Home Assistant before 2026.11)
 
-1. Add this repository as a custom repository in HACS  
-   `https://github.com/holdestmade/Unifi-WAN`
-2. In Home Assistant, open **HACS → Integrations**, find **UniFi WAN** and install.
-3. Restart Home Assistant if prompted.
+1. In Home Assistant, open **HACS**, search for **UniFi WAN** and install it.
+2. Restart Home Assistant if prompted.
+
+If **UniFi WAN** doesn't show up in the search, add this repository as a
+custom repository in HACS first (`https://github.com/holdestmade/Unifi-WAN`,
+category **Integration**), then install it.
 
 ### Manual
 

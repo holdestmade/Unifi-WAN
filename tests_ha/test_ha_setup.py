@@ -77,6 +77,61 @@ async def test_a_two_wan_gateway_sets_up_every_platform(
     assert device.sw_version == "4.0.6"
 
 
+async def test_entities_are_named_after_the_device_and_keep_their_ids(
+    hass: HomeAssistant, console: MockConsole
+) -> None:
+    """Names come from the device, but the ids are the ones the old,
+    "UniFi"-prefixed names produced, so new installs match existing ones.
+    """
+    entry = await setup_entry(hass, make_entry(hass))
+    device_name = f"UniFi WAN ({HOST} / {SITE})"
+
+    expected = {
+        ("sensor", "wan_ipv4"): ("sensor.unifi_wan_ipv4", "WAN IPv4"),
+        ("sensor", "wan_down_mbps_scan_interval"): (
+            "sensor.unifi_wan_download_scan_interval",
+            "WAN download scan interval",
+        ),
+        ("sensor", "speedtest_last_run"): (
+            "sensor.unifi_speedtest_last_run",
+            "Speedtest last run",
+        ),
+        ("sensor", "isp_expected_down"): (
+            "sensor.unifi_wan_isp_expected_download_speed",
+            "WAN ISP expected download speed",
+        ),
+        ("sensor", "wan2_speedtest_server_provider_url"): (
+            "sensor.unifi_wan2_speedtest_server_provider_url",
+            "WAN2 speedtest server provider URL",
+        ),
+        ("sensor", "wan2_isp_organization"): (
+            "sensor.unifi_wan2_isp_organization",
+            "WAN2 ISP organization",
+        ),
+        ("binary_sensor", "active_wan_up"): (
+            "binary_sensor.unifi_active_wan_up",
+            "Active WAN up",
+        ),
+        ("binary_sensor", "speedtest_in_progress"): (
+            "binary_sensor.unifi_speedtest_in_progress",
+            "Speedtest in progress",
+        ),
+        ("button", "run_speedtest_wan2"): (
+            "button.unifi_run_speedtest_wan2",
+            "Run speedtest WAN2",
+        ),
+        ("switch", "auto_speedtest_enabled"): (
+            "switch.unifi_wan_auto_speedtest",
+            "WAN auto speedtest",
+        ),
+    }
+    for (platform, key), (expected_id, name) in expected.items():
+        found = entity_id(hass, platform, entry, key)
+        assert found == expected_id
+        state = hass.states.get(found)
+        assert state.attributes["friendly_name"] == f"{device_name} {name}"
+
+
 async def test_a_one_wan_gateway_has_no_per_wan_entities(
     hass: HomeAssistant, console: MockConsole
 ) -> None:

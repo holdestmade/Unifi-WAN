@@ -47,24 +47,26 @@ It does not support:
 
 ## Exposed entities
 
+Entity names describe what each entity measures, and Home Assistant shows them after the device name — for example **UniFi WAN (192.168.1.1 / default) WAN download**. Entity ids keep the form earlier releases created, such as `sensor.unifi_wan_download`, so existing automations and dashboards carry on working, and new installs get the same ids.
+
 ### Sensors
 
 **WAN status & rates**
 
-- **UniFi WAN\* IPv4**  
+- **WAN\* IPv4**  
   - Current WAN\* IPv4 address  
-- **UniFi WAN\* IPv6**  
+- **WAN\* IPv6**  
   - Current WAN\* IPv6 address (if present)
-- **UniFi WAN Download**  
+- **WAN download**  
   - Current downstream rate in **Mbit/s**  
   - Updates on the **Fast WAN rate interval**
-- **UniFi WAN Upload**  
+- **WAN upload**  
   - Current upstream rate in **Mbit/s**  
   - Updates on the **Fast WAN rate interval**
-- **UniFi WAN Download (Scan Interval)**  
+- **WAN download scan interval**  
   - Current downstream rate in **Mbit/s**  
   - Updates on the **Scan interval**
-- **UniFi WAN Upload (Scan Interval)**  
+- **WAN upload scan interval**  
   - Current upstream rate in **Mbit/s**  
   - Updates on the **Scan interval**
 
@@ -76,41 +78,41 @@ These report the **active WAN's** speedtest result, so on a multi-WAN gateway th
 
 These show the same figure as the active WAN's own per-WAN sensor, because both read the result the integration recorded for that WAN. That result is remembered, so a gateway that rewrites its last-run block between polls — some do, leaving it briefly empty — cannot drag these sensors back to an older run.
 
-Two sources feed it — the controller's per-WAN record and the gateway's own last-run block — and the newer of the two that actually carries figures wins. Where the gateway names no interface for its run, the block is taken as the active WAN's unless a per-WAN record of the same moment shows it belonged to another line; some firmware names the interface only while a run is fresh, and without this the sensors would fall back to the previous result minutes later. On a multi-WAN gateway whose active uplink cannot be resolved at all, the newest result of any WAN is shown rather than nothing, and **UniFi Speedtest WAN Interface** names the WAN it describes.
+Two sources feed it — the controller's per-WAN record and the gateway's own last-run block — and the newer of the two that actually carries figures wins. Where the gateway names no interface for its run, the block is taken as the active WAN's unless a per-WAN record of the same moment shows it belonged to another line; some firmware names the interface only while a run is fresh, and without this the sensors would fall back to the previous result minutes later. On a multi-WAN gateway whose active uplink cannot be resolved at all, the newest result of any WAN is shown rather than nothing, and **Speedtest WAN interface** names the WAN it describes.
 
 Where the controller has no per-WAN records there is only one result to report, and these show it: the gateway’s `speedtest-status` block, falling back to the equivalent fields on the `uplink` section for firmware that does not report a block at all.
 
 Those two are separate records of separate runs, so a result is taken whole from one of them and never assembled field by field. The gateway rewrites its block around a run and can be caught with a field missing or the whole block empty; borrowing the missing field from the `uplink` section paired the current run's throughput with the timestamp of whichever older run those legacy fields last caught — months earlier on firmware that no longer maintains them. A WAN's recorded result never moves backwards in time either, so a stale record cannot displace a newer one even for the one poll it takes to correct itself.
 
-- **UniFi Speedtest Download**  
+- **Speedtest download**  
   - Gateway speedtest download result in **Mbit/s**  
-- **UniFi Speedtest Upload**  
+- **Speedtest upload**  
   - Gateway speedtest upload result in **Mbit/s**  
-- **UniFi Speedtest Ping**  
+- **Speedtest ping**  
   - Gateway speedtest latency in **ms**  
-- **UniFi Speedtest Last Run**  
+- **Speedtest last run**  
   - Timestamp of the last speedtest  
-- **UniFi Speedtest Server Provider**  
+- **Speedtest server provider**  
   - Operator of the server the test ran against, e.g. `Exascale`  
-- **UniFi Speedtest Server Provider URL**  
+- **Speedtest server provider URL**  
   - That operator's speedtest host  
-- **UniFi Speedtest Server City**  
-- **UniFi Speedtest Server Country**  
+- **Speedtest server city**  
+- **Speedtest server country**  
 
 The last four describe **the far end of the test**, not your own line — the ISP sensors below are that. They are read only from the `server` sub-object of the gateway's `speedtest-status` block, never from the fields around it, which use some of the same names for the subscriber side.
 
 **Per-WAN speedtest**
 
-- **UniFi WAN\* Speedtest Download** (**Mbit/s**)  
-- **UniFi WAN\* Speedtest Upload** (**Mbit/s**)  
-- **UniFi WAN\* Speedtest Ping** (**ms**)  
-- **UniFi WAN\* Speedtest Last Run** (timestamp)
-- **UniFi WAN\* Speedtest Server Provider**
-- **UniFi WAN\* Speedtest Server Provider URL**
-- **UniFi WAN\* Speedtest Server City**
-- **UniFi WAN\* Speedtest Server Country**
+- **WAN\* speedtest download** (**Mbit/s**)  
+- **WAN\* speedtest upload** (**Mbit/s**)  
+- **WAN\* speedtest ping** (**ms**)  
+- **WAN\* speedtest last run** (timestamp)
+- **WAN\* speedtest server provider**
+- **WAN\* speedtest server provider URL**
+- **WAN\* speedtest server city**
+- **WAN\* speedtest server country**
 
-These are only created when the gateway has **more than one WAN**. With a single WAN they would just restate the gateway-wide **UniFi Speedtest** sensors above, since the one WAN is always the one tested.
+These are only created when the gateway has **more than one WAN**. With a single WAN they would just restate the gateway-wide **Speedtest** sensors above, since the one WAN is always the one tested.
 
 Where these values come from depends on what the controller offers, and each sensor's `attributed_by` attribute records which route was used:
 
@@ -125,15 +127,15 @@ The **server** details are the exception to route 1 above: the per-WAN records n
 
 **ISP identification**
 
-- **UniFi WAN ISP** / **UniFi WAN\* ISP**  
+- **WAN ISP** / **WAN\* ISP**  
   - Name of the internet provider the line runs over, e.g. `Kcom`  
-- **UniFi WAN ISP Organization** / **UniFi WAN\* ISP Organization**  
+- **WAN ISP organization** / **WAN\* ISP organization**  
   - The provider's registered organisation, where it differs from the trading name, e.g. `KCOM Group Limited`  
-- **UniFi WAN ASN** / **UniFi WAN\* ASN**  
+- **WAN ASN** / **WAN\* ASN**  
   - Autonomous system number the public address belongs to  
-- **UniFi WAN City** / **UniFi WAN\* City**  
+- **WAN city** / **WAN\* city**  
   - City the public address geolocates to  
-- **UniFi WAN Country** / **UniFi WAN\* Country**  
+- **WAN country** / **WAN\* country**  
   - Country the public address geolocates to  
 
 These come from the geolocation lookup the gateway performs against each WAN's **own** public address, which it reports per WAN interface. Each WAN is therefore labelled with its own operator and can never inherit another line's; the gateway-wide sensors show whichever WAN is currently the active uplink, and report nothing while that cannot be resolved.
@@ -142,17 +144,17 @@ The lookup is independent of speedtests: it is refreshed on every poll and is po
 
 A gateway that performs no lookup — some firmware does not — leaves them `unknown`. The [diagnostics](#diagnostics) download shows what it reported, under `derived.geo_info`.
 
-There is no separate ISP IP sensor: the public address these are derived from is already the **UniFi WAN IPv4** / **UniFi WAN\* IPv4** sensor above.
+There is no separate ISP IP sensor: the public address these are derived from is already the **WAN IPv4** / **WAN\* IPv4** sensor above.
 
 **Expected line speed**
 
 Set what your line is sold as under **Options**, and the last speedtest is compared against it.
 
-- **UniFi WAN ISP Expected Download Speed** (**Mbit/s**)
-- **UniFi WAN ISP Expected Upload Speed** (**Mbit/s**)
+- **WAN ISP expected download speed** (**Mbit/s**)
+- **WAN ISP expected upload speed** (**Mbit/s**)
   - Simply what you configured, exposed as a sensor so a dashboard can put the two figures side by side.
-- **UniFi WAN ISP Download Speed Status**
-- **UniFi WAN ISP Upload Speed Status**
+- **WAN ISP download speed status**
+- **WAN ISP upload speed status**
   - `Expected`, `Faster` or `Slower`
 
 The verdict allows a tolerance either way, 2% by default and configurable under **Options**. At 2%, against a 500 Mbit/s line:
@@ -167,7 +169,7 @@ The boundary counts as met — exactly 2% down is still the line delivering what
 
 Both sensors carry `expected_mbps`, `measured_mbps`, `difference_mbps` and `difference_percent` as attributes, so "by how much?" needs no template.
 
-The comparison reads the same result the gateway-wide **UniFi Speedtest Download** / **Upload** sensors show, so the two can never disagree about what was measured. That means it follows the **active WAN** on a multi-WAN gateway; the expected figures are a single pair for the gateway, not one per line.
+The comparison reads the same result the gateway-wide **Speedtest download** / **upload** sensors show, so the two can never disagree about what was measured. That means it follows the **active WAN** on a multi-WAN gateway; the expected figures are a single pair for the gateway, not one per line.
 
 Leave either at `0` and its pair of sensors reports `unknown`. The sensors are always created, so filling the option in later does not change which entities exist.
 
@@ -175,23 +177,23 @@ Leave either at `0` and its pair of sensors reports `unknown`. The sensors are a
 
 Every WAN sensor reads the site's gateway, so that is picked first: a known UniFi gateway model that is routing the site's traffic. A console of a gateway model running as something else — a UniFi Express set up as a mesh access point, say, which still reports itself as the same kind of device as a UDR — is passed over for the device that reports the site's WANs. If the WANs look wrong, **Download diagnostics** lists every other device with its mode and which WAN blocks it reports, which is usually enough to see which one was taken.
 
-- **UniFi Active WAN ID**  
+- **Active WAN ID**  
   - Logical ID of the active WAN (e.g. `WAN1`), or `Unknown`  
   - Derived by matching the uplink IP against each WAN section, then the uplink interface name against each WAN section's, then falling back to the only WAN that is up  
   - Attributes include the resolved WAN, the match reason and the per-WAN IPs, interface names and ports for debugging
-- **UniFi Active WAN Name**  
+- **Active WAN name**  
   - Human-friendly description of the currently active WAN, e.g. `Virgin Fibre (Port 9)` or `WAN1 (Port 9)` when the controller has no description of its own  
-  - Always derived from the same WAN section as **UniFi Active WAN ID**, so the two sensors can never point at different interfaces  
+  - Always derived from the same WAN section as **Active WAN ID**, so the two sensors can never point at different interfaces  
   - The WAN is qualified by its **chassis port** rather than its raw kernel interface name. UniFi numbers interfaces from zero and ports from one, so `eth8` is the port labelled **9** on the case — reporting the interface name directly reads like the neighbouring port. The port is only ever taken from the controller's own `physical_ports`/`port_table` data; where that is unavailable the interface name is shown instead, and it is never converted by arithmetic.
 
 ---
 
 ### Binary sensors
 
-- **UniFi WAN\* Internet**
-- **UniFi Active WAN Up**  
-- **UniFi WAN\* Link**  
-- **UniFi Speedtest In Progress**  
+- **WAN\* internet**
+- **Active WAN up**  
+- **WAN\* link**  
+- **Speedtest in progress**  
   - `on` while an integration-triggered speedtest command is running  
   - Turns off once results have been pulled and sensors refreshed
 
@@ -201,7 +203,7 @@ Every WAN sensor reads the site's gateway, so that is picked first: a known UniF
 
 ### Switches
 
-- **UniFi WAN Auto Speedtest**  
+- **WAN auto speedtest**  
   - Enables/disables the integration’s scheduled speedtest job  
   - Toggling this switch is saved to the integration options, so it stays in sync with the **Run speedtest automatically** option and survives restarts
 
@@ -209,9 +211,9 @@ Every WAN sensor reads the site's gateway, so that is picked first: a known UniF
 
 ### Buttons
 
-- **Run UniFi Speedtest**
+- **Run speedtest**
   - Triggers a one-off speedtest on the active UniFi gateway (plus one button per WAN interface, where the gateway has more than one WAN)  
-  - The test runs in the background; the integration polls the controller until a new result is reported (up to 5 minutes) and then refreshes the `Speedtest` sensors. `UniFi Speedtest In Progress` stays `on` while it waits.
+  - The test runs in the background; the integration polls the controller until a new result is reported (up to 5 minutes) and then refreshes the `Speedtest` sensors. `Speedtest in progress` stays `on` while it waits.
   - A run counts as finished when **any** result the controller keeps moves — the gateway's own last-run block or any per-WAN record — because firmware differs over which of them a run updates, and a gateway that ignores the requested interface writes the result against a different WAN than the one asked for.
   - Where a gateway accepts a per-WAN request and then records nothing at all, the run is repeated as a plain whole-gateway speedtest and that gateway is not asked to target an interface again for the rest of the session. Both are logged as warnings naming the WAN and the interface involved.
 
@@ -258,8 +260,8 @@ All options are available via the integration’s **Options** UI and can be chan
   - UniFi API limit is ~100 calls per minute per API key.
 - **Fast WAN rate interval (seconds)**  
   - Poll interval for the per-gateway endpoint: `stat/device/<mac>`  
-  - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** (`UniFi WAN Download` / `UniFi WAN Upload`) and totals integration.  
-  - Scan-interval WAN rate sensors (`UniFi WAN Download (Scan Interval)` / `UniFi WAN Upload (Scan Interval)`) continue updating on the Scan interval even when this is disabled.  
+  - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** (`WAN download` / `WAN upload`) and totals integration.  
+  - Scan-interval WAN rate sensors (`WAN download scan interval` / `WAN upload scan interval`) continue updating on the Scan interval even when this is disabled.  
   - Set this to **0** to disable fast per-second polling entirely.  
   - You can set this to **1–2 seconds** for near real-time graphs when needed.  
   - This poll parses only as far as the two rate sensors read, so running it once a second costs a fraction of a full scan.
@@ -276,7 +278,7 @@ All options are available via the integration’s **Options** UI and can be chan
 **ISP line speed**
 
 - **ISP Expected Download Speed** / **ISP Expected Upload Speed** (**Mbit/s**, default **0**)
-  - What your line is sold as. Drives the **UniFi WAN ISP Download Speed Status** / **Upload Speed Status** sensors described above.
+  - What your line is sold as. Drives the **WAN ISP download speed status** / **upload speed status** sensors described above.
   - `0` means not configured: those sensors stay `unknown` rather than comparing against nothing.
 - **ISP Speed Tolerance** (**%**, default **2**)
   - How far either side of the expected speed still counts as meeting it.

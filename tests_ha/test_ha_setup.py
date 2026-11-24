@@ -87,10 +87,12 @@ async def test_entities_are_named_after_the_device_and_keep_their_ids(
     device_name = f"UniFi WAN ({HOST} / {SITE})"
 
     expected = {
-        ("sensor", "wan_ipv4"): ("sensor.unifi_wan_ipv4", "WAN IPv4"),
+        ("sensor", "wan_ipv4"): ("sensor.unifi_wan_ipv4", "IPv4"),
+        ("sensor", "wan_down_mbps"): ("sensor.unifi_wan_download", "Download"),
+        ("sensor", "wan_city"): ("sensor.unifi_wan_city", "City"),
         ("sensor", "wan_down_mbps_scan_interval"): (
             "sensor.unifi_wan_download_scan_interval",
-            "WAN download scan interval",
+            "Download scan interval",
         ),
         ("sensor", "speedtest_last_run"): (
             "sensor.unifi_speedtest_last_run",
@@ -98,7 +100,7 @@ async def test_entities_are_named_after_the_device_and_keep_their_ids(
         ),
         ("sensor", "isp_expected_down"): (
             "sensor.unifi_wan_isp_expected_download_speed",
-            "WAN ISP expected download speed",
+            "ISP expected download speed",
         ),
         ("sensor", "wan2_speedtest_server_provider_url"): (
             "sensor.unifi_wan2_speedtest_server_provider_url",
@@ -107,6 +109,10 @@ async def test_entities_are_named_after_the_device_and_keep_their_ids(
         ("sensor", "wan2_isp_organization"): (
             "sensor.unifi_wan2_isp_organization",
             "WAN2 ISP organization",
+        ),
+        ("binary_sensor", "wan_internet"): (
+            "binary_sensor.unifi_wan_internet",
+            "Internet",
         ),
         ("binary_sensor", "active_wan_up"): (
             "binary_sensor.unifi_active_wan_up",
@@ -122,7 +128,7 @@ async def test_entities_are_named_after_the_device_and_keep_their_ids(
         ),
         ("switch", "auto_speedtest_enabled"): (
             "switch.unifi_wan_auto_speedtest",
-            "WAN auto speedtest",
+            "Auto speedtest",
         ),
     }
     for (platform, key), (expected_id, name) in expected.items():

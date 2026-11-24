@@ -17,7 +17,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .entity import legacy_entity_id
+from .entity import LEGACY_NAME_PREFIX, LEGACY_WAN_PREFIX, legacy_entity_id
 from .models import UniFiWanData
 from .runtime import UniFiWanConfigEntry
 from .speedtest import SpeedtestManager
@@ -26,6 +26,8 @@ from .speedtest import SpeedtestManager
 @dataclass(frozen=True, kw_only=True)
 class UniFiBinaryEntityDescription(BinarySensorEntityDescription):
     value_fn: Callable[[UniFiWanData], bool] = lambda x: False
+    # What the name used to start with, for the entity id; see entity.py.
+    legacy_prefix: str = LEGACY_NAME_PREFIX
 
 
 def wan_has_internet(d: UniFiWanData, wan_number: int) -> bool:
@@ -63,7 +65,8 @@ def any_wan_has_internet(d: UniFiWanData) -> bool:
 BINARY_SENSORS: tuple[UniFiBinaryEntityDescription, ...] = (
     UniFiBinaryEntityDescription(
         key="wan_internet",
-        name="WAN internet",
+        name="Internet",
+        legacy_prefix=LEGACY_WAN_PREFIX,
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=any_wan_has_internet,
     ),
@@ -133,7 +136,9 @@ class UniFiGenericBinary(CoordinatorEntity, BinarySensorEntity):
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info
         self.entity_description = description
-        self.entity_id = legacy_entity_id("binary_sensor", str(description.name))
+        self.entity_id = legacy_entity_id(
+            "binary_sensor", str(description.name), description.legacy_prefix
+        )
 
     @property
     def is_on(self) -> bool:

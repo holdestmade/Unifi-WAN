@@ -66,8 +66,8 @@
           "speed_tolerance_percent": "ISP speed tolerance (%)"
         },
         "data_description": {
-          "expected_download_mbps": "What your line is sold as. The WAN ISP download speed status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
-          "expected_upload_mbps": "What your line is sold as. The WAN ISP upload speed status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
+          "expected_download_mbps": "What your line is sold as. The ISP download speed status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
+          "expected_upload_mbps": "What your line is sold as. The ISP upload speed status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
           "speed_tolerance_percent": "How far either side of the expected speed still counts as meeting it. At 2%, a 500 Mbit/s line reads Expected between 490 and 510. Widen it for a connection that varies by time of day; 0 means only an exact match counts."
         }
       }

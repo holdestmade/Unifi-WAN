@@ -30,7 +30,7 @@ from .const import (
     SPEED_TOLERANCE,
     SPEEDTEST_SERVER_FIELDS,
 )
-from .entity import legacy_entity_id
+from .entity import LEGACY_NAME_PREFIX, LEGACY_WAN_PREFIX, legacy_entity_id
 from .models import (
     UniFiWanData,
     gateway_result_wan,
@@ -75,6 +75,8 @@ class UniFiSensorDescription(SensorEntityDescription):
     value_fn: Callable[[UniFiWanData], Any] = lambda x: None
     attributes_fn: Callable[[UniFiWanData], dict[str, Any] | None] | None = None
     use_rate_coordinator: bool = False
+    # What the name used to start with, for the entity id; see entity.py.
+    legacy_prefix: str = LEGACY_NAME_PREFIX
 
 
 def _mbps(val: Any) -> float | None:
@@ -433,7 +435,8 @@ def _expected_speed_descriptions(
         descriptions.append(
             UniFiSensorDescription(
                 key=f"isp_expected_{field}",
-                name=f"WAN ISP expected {label} speed",
+                name=f"ISP expected {label} speed",
+                legacy_prefix=LEGACY_WAN_PREFIX,
                 icon=expected_icon,
                 device_class=SensorDeviceClass.DATA_RATE,
                 native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
@@ -446,7 +449,8 @@ def _expected_speed_descriptions(
         descriptions.append(
             UniFiSensorDescription(
                 key=f"isp_{field}_vs_expected",
-                name=f"WAN ISP {label} speed status",
+                name=f"ISP {label} speed status",
+                legacy_prefix=LEGACY_WAN_PREFIX,
                 icon=comparison_icon,
                 device_class=SensorDeviceClass.ENUM,
                 options=list(SPEED_COMPARISON_OPTIONS),
@@ -516,7 +520,8 @@ def _wan_isp_value_fn(wan_number: int, field: str) -> Callable[[UniFiWanData], A
 _ISP_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
     UniFiSensorDescription(
         key=f"wan_{suffix}",
-        name=f"WAN {label}",
+        name=label[0].upper() + label[1:],
+        legacy_prefix=LEGACY_WAN_PREFIX,
         icon=icon,
         value_fn=_isp_value_fn(field),
     )
@@ -527,13 +532,15 @@ _ISP_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
 SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     UniFiSensorDescription(
         key="wan_ipv4",
-        name="WAN IPv4",
+        name="IPv4",
+        legacy_prefix=LEGACY_WAN_PREFIX,
         icon="mdi:ip",
         value_fn=lambda d: d.uplink.get("ip") or None,
     ),
     UniFiSensorDescription(
         key="wan_ipv6",
-        name="WAN IPv6",
+        name="IPv6",
+        legacy_prefix=LEGACY_WAN_PREFIX,
         icon="mdi:ip-network-outline",
         value_fn=lambda d: d.uplink.get("ip6") or None,
         attributes_fn=lambda d: {
@@ -547,7 +554,8 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_down_mbps",
-        name="WAN download",
+        name="Download",
+        legacy_prefix=LEGACY_WAN_PREFIX,
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -557,7 +565,8 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_up_mbps",
-        name="WAN upload",
+        name="Upload",
+        legacy_prefix=LEGACY_WAN_PREFIX,
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -567,7 +576,8 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_down_mbps_scan_interval",
-        name="WAN download scan interval",
+        name="Download scan interval",
+        legacy_prefix=LEGACY_WAN_PREFIX,
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -576,7 +586,8 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_up_mbps_scan_interval",
-        name="WAN upload scan interval",
+        name="Upload scan interval",
+        legacy_prefix=LEGACY_WAN_PREFIX,
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -837,7 +848,9 @@ class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info
         self.entity_description = description
-        self.entity_id = legacy_entity_id("sensor", str(description.name))
+        self.entity_id = legacy_entity_id(
+            "sensor", str(description.name), description.legacy_prefix
+        )
 
     @property
     def native_value(self) -> Any:

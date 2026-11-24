@@ -47,26 +47,26 @@ It does not support:
 
 ## Exposed entities
 
-Entity names describe what each entity measures, and Home Assistant shows them after the device name — for example **UniFi WAN (192.168.1.1 / default) WAN download**. Entity ids keep the form earlier releases created, such as `sensor.unifi_wan_download`, so existing automations and dashboards carry on working, and new installs get the same ids.
+Entity names describe what each entity measures, and Home Assistant shows them after the device name — for example **UniFi WAN (192.168.1.1 / default) Download**. Entity ids keep the form earlier releases created, such as `sensor.unifi_wan_download`, so existing automations and dashboards carry on working, and new installs get the same ids.
 
 ### Sensors
 
 **WAN status & rates**
 
-- **WAN\* IPv4**  
-  - Current WAN\* IPv4 address  
-- **WAN\* IPv6**  
-  - Current WAN\* IPv6 address (if present)
-- **WAN download**  
+- **IPv4** / **WAN\* IPv4**  
+  - Current IPv4 address of the active WAN / WAN\*  
+- **IPv6** / **WAN\* IPv6**  
+  - Current IPv6 address of the active WAN / WAN\* (if present)
+- **Download**  
   - Current downstream rate in **Mbit/s**  
   - Updates on the **Rate interval**
-- **WAN upload**  
+- **Upload**  
   - Current upstream rate in **Mbit/s**  
   - Updates on the **Rate interval**
-- **WAN download scan interval**  
+- **Download scan interval**  
   - Current downstream rate in **Mbit/s**  
   - Updates on the **Scan interval**
-- **WAN upload scan interval**  
+- **Upload scan interval**  
   - Current upstream rate in **Mbit/s**  
   - Updates on the **Scan interval**
 
@@ -127,15 +127,15 @@ The **server** details are the exception to route 1 above: the per-WAN records n
 
 **ISP identification**
 
-- **WAN ISP** / **WAN\* ISP**  
+- **ISP** / **WAN\* ISP**  
   - Name of the internet provider the line runs over, e.g. `Kcom`  
-- **WAN ISP organization** / **WAN\* ISP organization**  
+- **ISP organization** / **WAN\* ISP organization**  
   - The provider's registered organisation, where it differs from the trading name, e.g. `KCOM Group Limited`  
-- **WAN ASN** / **WAN\* ASN**  
+- **ASN** / **WAN\* ASN**  
   - Autonomous system number the public address belongs to  
-- **WAN city** / **WAN\* city**  
+- **City** / **WAN\* city**  
   - City the public address geolocates to  
-- **WAN country** / **WAN\* country**  
+- **Country** / **WAN\* country**  
   - Country the public address geolocates to  
 
 These come from the geolocation lookup the gateway performs against each WAN's **own** public address, which it reports per WAN interface. Each WAN is therefore labelled with its own operator and can never inherit another line's; the gateway-wide sensors show whichever WAN is currently the active uplink, and report nothing while that cannot be resolved.
@@ -144,17 +144,17 @@ The lookup is independent of speedtests: it is refreshed on every poll and is po
 
 A gateway that performs no lookup — some firmware does not — leaves them `unknown`. The [diagnostics](#diagnostics) download shows what it reported, under `derived.geo_info`.
 
-There is no separate ISP IP sensor: the public address these are derived from is already the **WAN IPv4** / **WAN\* IPv4** sensor above.
+There is no separate ISP IP sensor: the public address these are derived from is already the **IPv4** / **WAN\* IPv4** sensor above.
 
 **Expected line speed**
 
 Set what your line is sold as under **Options**, and the last speedtest is compared against it.
 
-- **WAN ISP expected download speed** (**Mbit/s**)
-- **WAN ISP expected upload speed** (**Mbit/s**)
+- **ISP expected download speed** (**Mbit/s**)
+- **ISP expected upload speed** (**Mbit/s**)
   - Simply what you configured, exposed as a sensor so a dashboard can put the two figures side by side.
-- **WAN ISP download speed status**
-- **WAN ISP upload speed status**
+- **ISP download speed status**
+- **ISP upload speed status**
   - `Expected`, `Faster` or `Slower`
 
 The verdict allows a tolerance either way, 2% by default and configurable under **Options**. At 2%, against a 500 Mbit/s line:
@@ -190,7 +190,7 @@ Every WAN sensor reads the site's gateway, so that is picked first: a known UniF
 
 ### Binary sensors
 
-- **WAN\* internet**
+- **Internet** / **WAN\* internet**
 - **Active WAN up**  
 - **WAN\* link**  
 - **Speedtest in progress**  
@@ -203,7 +203,7 @@ Every WAN sensor reads the site's gateway, so that is picked first: a known UniF
 
 ### Switches
 
-- **WAN auto speedtest**  
+- **Auto speedtest**  
   - Enables/disables the integration’s scheduled speedtest job  
   - Toggling this switch is saved to the integration options, so it stays in sync with the **Run speedtest automatically** option and survives restarts
 
@@ -260,8 +260,8 @@ All options are available via the integration’s **Options** UI and can be chan
   - UniFi API limit is ~100 calls per minute per API key.
 - **Rate interval (seconds, 0 to disable)**  
   - Poll interval for the per-gateway endpoint: `stat/device/<mac>`  
-  - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** (`WAN download` / `WAN upload`) and totals integration.  
-  - Scan-interval WAN rate sensors (`WAN download scan interval` / `WAN upload scan interval`) continue updating on the Scan interval even when this is disabled.  
+  - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** (`Download` / `Upload`) and totals integration.  
+  - Scan-interval WAN rate sensors (`Download scan interval` / `Upload scan interval`) continue updating on the Scan interval even when this is disabled.  
   - Set this to **0** to disable fast per-second polling entirely.  
   - You can set this to **1–2 seconds** for near real-time graphs when needed.  
   - This poll parses only as far as the two rate sensors read, so running it once a second costs a fraction of a full scan.
@@ -278,7 +278,7 @@ All options are available via the integration’s **Options** UI and can be chan
 **ISP line speed**
 
 - **ISP expected download speed** / **ISP expected upload speed** (**Mbit/s**, default **0**)
-  - What your line is sold as. Drives the **WAN ISP download speed status** / **upload speed status** sensors described above.
+  - What your line is sold as. Drives the **ISP download speed status** / **upload speed status** sensors described above.
   - `0` means not configured: those sensors stay `unknown` rather than comparing against nothing.
 - **ISP speed tolerance** (**%**, default **2**)
   - How far either side of the expected speed still counts as meeting it.
@@ -333,7 +333,7 @@ Produces a JSON file containing what the controller sent and what the integratio
 - The per-WAN speedtest API's raw response, where the controller offers one
 - The integration's own conclusions: the resolved active WAN and how it was matched, the parsed per-WAN results, and the values the sensors are currently showing
 
-Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers, the speedtest server's location and URL and the geolocation lookup behind the **WAN ISP/ASN/City** sensors are redacted. Three rules apply, in order:
+Credentials, MAC addresses, public IP addresses, serial numbers, account identifiers, DNS servers, the speedtest server's location and URL and the geolocation lookup behind the **ISP/ASN/City** sensors are redacted. Three rules apply, in order:
 
 1. **By field name** — an explicit list of the keys that carry them.
 2. **By name shape** — any field whose name ends in `_id`, `_uuid`, `_token`, `_key`, `_authkey`, `_hash`, `_mac`, `_ip`, `_secret`, `_password` or `_fingerprint`.

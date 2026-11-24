@@ -17,6 +17,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .entity import legacy_entity_id
 from .models import UniFiWanData
 from .runtime import UniFiWanConfigEntry
 from .speedtest import SpeedtestManager
@@ -62,13 +63,13 @@ def any_wan_has_internet(d: UniFiWanData) -> bool:
 BINARY_SENSORS: tuple[UniFiBinaryEntityDescription, ...] = (
     UniFiBinaryEntityDescription(
         key="wan_internet",
-        name="UniFi WAN Internet",
+        name="WAN internet",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=any_wan_has_internet,
     ),
     UniFiBinaryEntityDescription(
         key="active_wan_up",
-        name="UniFi Active WAN Up",
+        name="Active WAN up",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda d: bool(d.uplink.get("up")),
     ),
@@ -99,14 +100,14 @@ async def async_setup_entry(
             # the two cannot disagree about whether anything is connected.
             internet = UniFiBinaryEntityDescription(
                 key=f"wan{wan_number}_internet",
-                name=f"UniFi WAN{wan_number} Internet",
+                name=f"WAN{wan_number} internet",
                 device_class=BinarySensorDeviceClass.CONNECTIVITY,
                 value_fn=lambda d, wn=wan_number: wan_has_internet(d, wn),
             )
             entities.append(UniFiGenericBinary(device, entry_id, device_info, internet))
             link = UniFiBinaryEntityDescription(
                 key=f"wan{wan_number}_link",
-                name=f"UniFi WAN{wan_number} Link",
+                name=f"WAN{wan_number} link",
                 device_class=BinarySensorDeviceClass.CONNECTIVITY,
                 value_fn=lambda d, wn=wan_number: bool(d.wan.get(wn, {}).get("up")),
             )
@@ -119,6 +120,8 @@ async def async_setup_entry(
 class UniFiGenericBinary(CoordinatorEntity, BinarySensorEntity):
     entity_description: UniFiBinaryEntityDescription
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator,
@@ -130,6 +133,7 @@ class UniFiGenericBinary(CoordinatorEntity, BinarySensorEntity):
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info
         self.entity_description = description
+        self.entity_id = legacy_entity_id("binary_sensor", str(description.name))
 
     @property
     def is_on(self) -> bool:
@@ -137,7 +141,8 @@ class UniFiGenericBinary(CoordinatorEntity, BinarySensorEntity):
 
 
 class UniFiSpeedtestInProgress(BinarySensorEntity):
-    _attr_name = "UniFi Speedtest In Progress"
+    _attr_has_entity_name = True
+    _attr_name = "Speedtest in progress"
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:progress-clock"
     _attr_should_poll = False
@@ -149,6 +154,7 @@ class UniFiSpeedtestInProgress(BinarySensorEntity):
         self._speedtest = speedtest
         self._attr_unique_id = f"{entry_id}_speedtest_in_progress"
         self._attr_device_info = device_info
+        self.entity_id = legacy_entity_id("binary_sensor", self._attr_name)
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(

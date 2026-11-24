@@ -1,5 +1,5 @@
 run_speedtest:
-  name: Run Speedtest
+  name: Run speedtest
   description: Trigger a speedtest on the UniFi gateway.
   fields:
     wan:

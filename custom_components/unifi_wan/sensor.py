@@ -30,6 +30,7 @@ from .const import (
     SPEED_TOLERANCE,
     SPEEDTEST_SERVER_FIELDS,
 )
+from .entity import legacy_entity_id
 from .models import (
     UniFiWanData,
     gateway_result_wan,
@@ -346,10 +347,10 @@ def _speedtest_interface(d: UniFiWanData) -> str:
 # reads as the plain "ISP" the rest of the UniFi UI calls it.
 WAN_ISP_SENSORS: Final[tuple[tuple[str, str, str, str], ...]] = (
     ("isp_name", "isp_name", "ISP", "mdi:web"),
-    ("isp_organization", "isp_organization", "ISP Organization", "mdi:domain"),
+    ("isp_organization", "isp_organization", "ISP organization", "mdi:domain"),
     ("asn", "asn", "ASN", "mdi:identifier"),
-    ("city", "city", "City", "mdi:city"),
-    ("country_name", "country_name", "Country", "mdi:earth"),
+    ("city", "city", "city", "mdi:city"),
+    ("country_name", "country_name", "country", "mdi:earth"),
 )
 
 
@@ -374,10 +375,10 @@ def _isp_value_fn(field: str) -> Callable[[UniFiWanData], Any]:
 # gateway tested against, never the subscriber's own line - the ISP
 # sensors above are that.
 SPEEDTEST_SERVER_SENSORS: Final[tuple[tuple[str, str, str], ...]] = (
-    ("server_provider", "Server Provider", "mdi:server-network"),
-    ("server_provider_url", "Server Provider URL", "mdi:link-variant"),
-    ("server_city", "Server City", "mdi:city-variant-outline"),
-    ("server_country", "Server Country", "mdi:earth-arrow-right"),
+    ("server_provider", "server provider", "mdi:server-network"),
+    ("server_provider_url", "server provider URL", "mdi:link-variant"),
+    ("server_city", "server city", "mdi:city-variant-outline"),
+    ("server_country", "server country", "mdi:earth-arrow-right"),
 )
 
 
@@ -391,7 +392,7 @@ def _server_value_fn(field: str) -> Callable[[UniFiWanData], Any]:
 _SERVER_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
     UniFiSensorDescription(
         key=f"speedtest_{field}",
-        name=f"UniFi Speedtest {label}",
+        name=f"Speedtest {label}",
         icon=icon,
         value_fn=_server_value_fn(field),
     )
@@ -404,8 +405,8 @@ _SERVER_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
 # controller has no idea what a subscriber pays for - so these are built
 # at setup from the options rather than declared as constants.
 EXPECTED_SPEED_SENSORS: Final[tuple[tuple[str, str, str, str], ...]] = (
-    ("down", "Download", "mdi:download-outline", "mdi:speedometer"),
-    ("up", "Upload", "mdi:upload-outline", "mdi:speedometer"),
+    ("down", "download", "mdi:download-outline", "mdi:speedometer"),
+    ("up", "upload", "mdi:upload-outline", "mdi:speedometer"),
 )
 
 
@@ -432,7 +433,7 @@ def _expected_speed_descriptions(
         descriptions.append(
             UniFiSensorDescription(
                 key=f"isp_expected_{field}",
-                name=f"UniFi WAN ISP Expected {label} Speed",
+                name=f"WAN ISP expected {label} speed",
                 icon=expected_icon,
                 device_class=SensorDeviceClass.DATA_RATE,
                 native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
@@ -445,7 +446,7 @@ def _expected_speed_descriptions(
         descriptions.append(
             UniFiSensorDescription(
                 key=f"isp_{field}_vs_expected",
-                name=f"UniFi WAN ISP {label} Speed Status",
+                name=f"WAN ISP {label} speed status",
                 icon=comparison_icon,
                 device_class=SensorDeviceClass.ENUM,
                 options=list(SPEED_COMPARISON_OPTIONS),
@@ -515,7 +516,7 @@ def _wan_isp_value_fn(wan_number: int, field: str) -> Callable[[UniFiWanData], A
 _ISP_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
     UniFiSensorDescription(
         key=f"wan_{suffix}",
-        name=f"UniFi WAN {label}",
+        name=f"WAN {label}",
         icon=icon,
         value_fn=_isp_value_fn(field),
     )
@@ -526,13 +527,13 @@ _ISP_SENSORS: Final[tuple[UniFiSensorDescription, ...]] = tuple(
 SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     UniFiSensorDescription(
         key="wan_ipv4",
-        name="UniFi WAN IPv4",
+        name="WAN IPv4",
         icon="mdi:ip",
         value_fn=lambda d: d.uplink.get("ip") or None,
     ),
     UniFiSensorDescription(
         key="wan_ipv6",
-        name="UniFi WAN IPv6",
+        name="WAN IPv6",
         icon="mdi:ip-network-outline",
         value_fn=lambda d: d.uplink.get("ip6") or None,
         attributes_fn=lambda d: {
@@ -546,7 +547,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_down_mbps",
-        name="UniFi WAN Download",
+        name="WAN download",
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -556,7 +557,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_up_mbps",
-        name="UniFi WAN Upload",
+        name="WAN upload",
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -566,7 +567,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_down_mbps_scan_interval",
-        name="UniFi WAN Download (Scan Interval)",
+        name="WAN download scan interval",
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -575,7 +576,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="wan_up_mbps_scan_interval",
-        name="UniFi WAN Upload (Scan Interval)",
+        name="WAN upload scan interval",
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -584,7 +585,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="speedtest_down",
-        name="UniFi Speedtest Download",
+        name="Speedtest download",
         icon="mdi:download",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -593,7 +594,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="speedtest_up",
-        name="UniFi Speedtest Upload",
+        name="Speedtest upload",
         icon="mdi:upload",
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -602,7 +603,7 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="speedtest_ping",
-        name="UniFi Speedtest Ping",
+        name="Speedtest ping",
         icon="mdi:timer",
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
@@ -611,14 +612,14 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     ),
     UniFiSensorDescription(
         key="speedtest_last_run",
-        name="UniFi Speedtest Last Run",
+        name="Speedtest last run",
         icon="mdi:clock-outline",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda d: _ts_date(_active_speedtest(d).get("lastrun")),
     ),
     UniFiSensorDescription(
         key="speedtest_interface",
-        name="UniFi Speedtest WAN Interface",
+        name="Speedtest WAN interface",
         icon="mdi:wan",
         value_fn=_speedtest_interface,
         attributes_fn=lambda d: {
@@ -638,14 +639,14 @@ SENSORS: Final[tuple[UniFiSensorDescription, ...]] = (
     *_ISP_SENSORS,
     UniFiSensorDescription(
         key="active_wan_id",
-        name="UniFi Active WAN ID",
+        name="Active WAN ID",
         icon="mdi:numeric",
         value_fn=_wan_id,
         attributes_fn=_active_wan_attributes,
     ),
     UniFiSensorDescription(
         key="active_wan_name",
-        name="UniFi Active WAN Name",
+        name="Active WAN name",
         icon="mdi:wan",
         value_fn=_wan_name,
         attributes_fn=_active_wan_attributes,
@@ -663,7 +664,7 @@ def _wan_speedtest_descriptions(
         (
             SensorEntityDescription(
                 key=f"wan{wan_number}_speedtest_down",
-                name=f"UniFi WAN{wan_number} Speedtest Download",
+                name=f"WAN{wan_number} speedtest download",
                 icon="mdi:download",
                 device_class=SensorDeviceClass.DATA_RATE,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -675,7 +676,7 @@ def _wan_speedtest_descriptions(
         (
             SensorEntityDescription(
                 key=f"wan{wan_number}_speedtest_up",
-                name=f"UniFi WAN{wan_number} Speedtest Upload",
+                name=f"WAN{wan_number} speedtest upload",
                 icon="mdi:upload",
                 device_class=SensorDeviceClass.DATA_RATE,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -687,7 +688,7 @@ def _wan_speedtest_descriptions(
         (
             SensorEntityDescription(
                 key=f"wan{wan_number}_speedtest_ping",
-                name=f"UniFi WAN{wan_number} Speedtest Ping",
+                name=f"WAN{wan_number} speedtest ping",
                 icon="mdi:timer",
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -699,7 +700,7 @@ def _wan_speedtest_descriptions(
         (
             SensorEntityDescription(
                 key=f"wan{wan_number}_speedtest_last_run",
-                name=f"UniFi WAN{wan_number} Speedtest Last Run",
+                name=f"WAN{wan_number} speedtest last run",
                 icon="mdi:clock-outline",
                 device_class=SensorDeviceClass.TIMESTAMP,
             ),
@@ -713,7 +714,7 @@ def _wan_speedtest_descriptions(
             (
                 SensorEntityDescription(
                     key=f"wan{wan_number}_speedtest_{field}",
-                    name=f"UniFi WAN{wan_number} Speedtest {label}",
+                    name=f"WAN{wan_number} speedtest {label}",
                     icon=icon,
                 ),
                 field,
@@ -735,7 +736,7 @@ def _wan_isp_descriptions(wan_number: int) -> tuple[UniFiSensorDescription, ...]
     return tuple(
         UniFiSensorDescription(
             key=f"wan{wan_number}_{suffix}",
-            name=f"UniFi WAN{wan_number} {label}",
+            name=f"WAN{wan_number} {label}",
             icon=icon,
             value_fn=_wan_isp_value_fn(wan_number, field),
         )
@@ -774,7 +775,7 @@ async def async_setup_entry(
         for wan_number in wan_numbers:
             ipv4 = UniFiSensorDescription(
                 key=f"wan{wan_number}_ipv4",
-                name=f"UniFi WAN{wan_number} IPv4",
+                name=f"WAN{wan_number} IPv4",
                 icon="mdi:ip",
                 value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip") or None,
             )
@@ -783,7 +784,7 @@ async def async_setup_entry(
             )
             ipv6 = UniFiSensorDescription(
                 key=f"wan{wan_number}_ipv6",
-                name=f"UniFi WAN{wan_number} IPv6",
+                name=f"WAN{wan_number} IPv6",
                 icon="mdi:ip-network-outline",
                 value_fn=lambda d, wn=wan_number: d.wan.get(wn, {}).get("ip6") or None,
                 attributes_fn=lambda d, wn=wan_number: {
@@ -823,6 +824,8 @@ async def async_setup_entry(
 class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
     entity_description: UniFiSensorDescription
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: DataUpdateCoordinator,
@@ -834,6 +837,7 @@ class UniFiGenericSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info
         self.entity_description = description
+        self.entity_id = legacy_entity_id("sensor", str(description.name))
 
     @property
     def native_value(self) -> Any:
@@ -862,6 +866,7 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
     it from the API.
     """
 
+    _attr_has_entity_name = True
     _attr_should_poll = False
 
     def __init__(
@@ -882,6 +887,7 @@ class UniFiWanSpeedtestSensor(RestoreSensor):
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info
         self.entity_description = description
+        self.entity_id = legacy_entity_id("sensor", str(description.name))
 
     @property
     def extra_restore_state_data(self) -> _WanSpeedtestExtraData:

@@ -11,6 +11,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_AUTO_SPEEDTEST
+from .entity import legacy_entity_id
 from .runtime import UniFiWanConfigEntry
 from .speedtest import SpeedtestManager
 
@@ -39,7 +40,8 @@ class UniFiAutoSpeedtestSwitch(SwitchEntity):
     so toggling does not briefly mark every entity unavailable.
     """
 
-    _attr_name = "UniFi WAN Auto Speedtest"
+    _attr_has_entity_name = True
+    _attr_name = "WAN auto speedtest"
     _attr_icon = "mdi:speedometer-slow"
     _attr_should_poll = False
 
@@ -54,6 +56,7 @@ class UniFiAutoSpeedtestSwitch(SwitchEntity):
         self._speedtest = speedtest
         self._attr_unique_id = f"{entry_id}_auto_speedtest_enabled"
         self._attr_device_info = device_info
+        self.entity_id = legacy_entity_id("switch", self._attr_name)
 
     async def async_added_to_hass(self) -> None:
         # Reflect changes made through the options dialog, which are applied

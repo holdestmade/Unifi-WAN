@@ -145,10 +145,10 @@ def test_four_sensors_are_created():
 def test_the_sensors_are_named_as_asked():
     names = sorted(d.name for d in _expected_speed_descriptions(500.0, 50.0))
     assert names == [
-        "UniFi WAN ISP Download Speed Status",
-        "UniFi WAN ISP Expected Download Speed",
-        "UniFi WAN ISP Expected Upload Speed",
-        "UniFi WAN ISP Upload Speed Status",
+        "WAN ISP download speed status",
+        "WAN ISP expected download speed",
+        "WAN ISP expected upload speed",
+        "WAN ISP upload speed status",
     ]
 
 

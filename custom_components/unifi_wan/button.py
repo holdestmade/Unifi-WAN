@@ -8,6 +8,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .entity import legacy_entity_id
 from .runtime import UniFiWanConfigEntry
 from .speedtest import SpeedtestManager
 
@@ -37,6 +38,7 @@ async def async_setup_entry(
 
 
 class UniFiSpeedtestButtonBase(ButtonEntity):
+    _attr_has_entity_name = True
     _attr_icon = "mdi:speedometer"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_should_poll = False
@@ -49,11 +51,12 @@ class UniFiSpeedtestButtonBase(ButtonEntity):
 
 
 class RunSpeedtestButton(UniFiSpeedtestButtonBase):
-    _attr_name = "UniFi Run Speedtest"
+    _attr_name = "Run speedtest"
 
     def __init__(self, speedtest, entry_id, device_info):
         super().__init__(speedtest, entry_id, device_info)
         self._attr_unique_id = f"{entry_id}_run_speedtest"
+        self.entity_id = legacy_entity_id("button", self._attr_name)
 
     async def async_press(self) -> None:
         self._speedtest.trigger()
@@ -63,8 +66,9 @@ class RunSpeedtestWanButton(UniFiSpeedtestButtonBase):
     def __init__(self, speedtest, entry_id, device_info, wan_number: int):
         super().__init__(speedtest, entry_id, device_info)
         self._wan_number = wan_number
-        self._attr_name = f"UniFi Run Speedtest WAN{wan_number}"
+        self._attr_name = f"Run speedtest WAN{wan_number}"
         self._attr_unique_id = f"{entry_id}_run_speedtest_wan{wan_number}"
+        self.entity_id = legacy_entity_id("button", self._attr_name)
 
     async def async_press(self) -> None:
         self._speedtest.trigger(self._wan_number)

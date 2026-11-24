@@ -59,10 +59,10 @@ Entity names describe what each entity measures, and Home Assistant shows them a
   - Current WAN\* IPv6 address (if present)
 - **WAN download**  
   - Current downstream rate in **Mbit/s**  
-  - Updates on the **Fast WAN rate interval**
+  - Updates on the **Rate interval**
 - **WAN upload**  
   - Current upstream rate in **Mbit/s**  
-  - Updates on the **Fast WAN rate interval**
+  - Updates on the **Rate interval**
 - **WAN download scan interval**  
   - Current downstream rate in **Mbit/s**  
   - Updates on the **Scan interval**
@@ -258,7 +258,7 @@ All options are available via the integration’s **Options** UI and can be chan
   - This is the “heavier” call (all devices).  
   - Keep this reasonably low frequency (e.g. 15–60s). The minimum is 5 seconds.  
   - UniFi API limit is ~100 calls per minute per API key.
-- **Fast WAN rate interval (seconds)**  
+- **Rate interval (seconds, 0 to disable)**  
   - Poll interval for the per-gateway endpoint: `stat/device/<mac>`  
   - Only fetches the gateway, so it’s much cheaper and is used for **live WAN up/down rates** (`WAN download` / `WAN upload`) and totals integration.  
   - Scan-interval WAN rate sensors (`WAN download scan interval` / `WAN upload scan interval`) continue updating on the Scan interval even when this is disabled.  

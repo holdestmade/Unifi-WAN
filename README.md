@@ -244,7 +244,7 @@ All options are available via the integration’s **Options** UI and can be chan
 
 - **Host / IP**  
   - Your UniFi OS console address (e.g. `192.168.1.1` or `udm.local`)
-- **API Key**  
+- **API key**  
   - X-API-Key generated in UniFi Console
 - **Site**  
   - UniFi Network site name (default: `default`)
@@ -277,10 +277,10 @@ All options are available via the integration’s **Options** UI and can be chan
 
 **ISP line speed**
 
-- **ISP Expected Download Speed** / **ISP Expected Upload Speed** (**Mbit/s**, default **0**)
+- **ISP expected download speed** / **ISP expected upload speed** (**Mbit/s**, default **0**)
   - What your line is sold as. Drives the **WAN ISP download speed status** / **upload speed status** sensors described above.
   - `0` means not configured: those sensors stay `unknown` rather than comparing against nothing.
-- **ISP Speed Tolerance** (**%**, default **2**)
+- **ISP speed tolerance** (**%**, default **2**)
   - How far either side of the expected speed still counts as meeting it.
   - `0` means only an exact match reads `Expected`; the maximum is `50`.
 - Changing any of these reloads the integration, as the other options here do.
@@ -440,7 +440,7 @@ category **Integration**), then install it.
 3. Go to **Settings → Devices & Services → Add Integration** and search for **“UniFi WAN”**.
 4. Enter:
    - Host/IP of your UniFi OS console  
-   - API Key  
+   - API key  
    - Site name (if not `default`)  
    - SSL verification preference
 

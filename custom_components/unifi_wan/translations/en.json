@@ -7,18 +7,18 @@
         "description": "Enter your UniFi OS connection details.",
         "data": {
           "host": "Host / IP",
-          "api_key": "API Key",
+          "api_key": "API key",
           "site": "Site",
-          "verify_ssl": "Verify SSL Certificate",
-          "auto_speedtest": "Run Speedtest Automatically",
-          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)"
+          "verify_ssl": "Verify SSL certificate",
+          "auto_speedtest": "Run speedtest automatically",
+          "auto_speedtest_minutes": "Auto speedtest interval (minutes)"
         }
       },
       "reauth_confirm": {
         "title": "Re-authenticate UniFi WAN",
         "description": "The API key for {host} is no longer valid. Enter a new API key.",
         "data": {
-          "api_key": "API Key"
+          "api_key": "API key"
         }
       },
       "reconfigure": {
@@ -26,17 +26,17 @@
         "description": "Change the address, API key or site this gateway is reached at. Entities and their history are kept. The speedtest schedule is under Configure.",
         "data": {
           "host": "Host / IP",
-          "api_key": "API Key",
+          "api_key": "API key",
           "site": "Site",
-          "verify_ssl": "Verify SSL Certificate"
+          "verify_ssl": "Verify SSL certificate"
         }
       }
     },
     "error": {
       "cannot_connect": "Cannot reach the console. Check the Host/IP (just the address, no https:// or port) and that TCP port 443 is open from Home Assistant to the console.",
       "invalid_auth": "The API key was rejected. Use a local API key created on the console under Settings > Control Plane > Integrations (requires UniFi Network 9.0+). Keys from unifi.ui.com are not supported.",
-      "invalid_site": "The console returned 404 Not Found. Check the Site name (usually 'default', not the display name) and that the console runs UniFi OS (UDM/UDR/UXG/Cloud Key with firmware 2.x or later).",
-      "ssl_error": "SSL certificate verification failed. Turn off 'Verify SSL Certificate' unless your console has a valid trusted certificate.",
+      "invalid_site": "The console returned 404 Not Found. Check the site name (usually 'default', not the display name) and that the console runs UniFi OS (UDM/UDR/UXG/Cloud Key with firmware 2.x or later).",
+      "ssl_error": "SSL certificate verification failed. Turn off 'Verify SSL certificate' unless your console has a valid trusted certificate.",
       "timeout": "The console did not respond within 30 seconds. Check the Host/IP and that no firewall is blocking TCP port 443.",
       "unknown": "Unexpected error"
     },
@@ -50,24 +50,24 @@
   "options": {
     "step": {
       "init": {
-        "title": "UniFi WAN Options",
+        "title": "UniFi WAN options",
         "description": "Adjust performance and speedtest settings.",
         "data": {
           "host": "Host / IP",
-          "api_key": "API Key (leave blank to keep current)",
+          "api_key": "API key (leave blank to keep current)",
           "site": "Site",
-          "verify_ssl": "Verify SSL Certificate",
-          "scan_interval": "Scan Interval (seconds)",
-          "rate_interval_seconds": "Rate Interval (seconds, 0 to disable)",
-          "auto_speedtest": "Run Speedtest Automatically",
-          "auto_speedtest_minutes": "Auto Speedtest Interval (minutes)",
-          "expected_download_mbps": "ISP Expected Download Speed (Mbit/s, 0 to disable)",
-          "expected_upload_mbps": "ISP Expected Upload Speed (Mbit/s, 0 to disable)",
-          "speed_tolerance_percent": "ISP Speed Tolerance (%)"
+          "verify_ssl": "Verify SSL certificate",
+          "scan_interval": "Scan interval (seconds)",
+          "rate_interval_seconds": "Rate interval (seconds, 0 to disable)",
+          "auto_speedtest": "Run speedtest automatically",
+          "auto_speedtest_minutes": "Auto speedtest interval (minutes)",
+          "expected_download_mbps": "ISP expected download speed (Mbit/s, 0 to disable)",
+          "expected_upload_mbps": "ISP expected upload speed (Mbit/s, 0 to disable)",
+          "speed_tolerance_percent": "ISP speed tolerance (%)"
         },
         "data_description": {
-          "expected_download_mbps": "What your line is sold as. The ISP Download Speed Status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
-          "expected_upload_mbps": "What your line is sold as. The ISP Upload Speed Status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
+          "expected_download_mbps": "What your line is sold as. The WAN ISP download speed status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
+          "expected_upload_mbps": "What your line is sold as. The WAN ISP upload speed status sensor compares each speedtest against it and reports Expected, Faster or Slower. Leave at 0 if you would rather not compare.",
           "speed_tolerance_percent": "How far either side of the expected speed still counts as meeting it. At 2%, a 500 Mbit/s line reads Expected between 490 and 510. Widen it for a connection that varies by time of day; 0 means only an exact match counts."
         }
       }
@@ -75,8 +75,8 @@
     "error": {
       "cannot_connect": "Cannot reach the console. Check the Host/IP (just the address, no https:// or port) and that TCP port 443 is open from Home Assistant to the console.",
       "invalid_auth": "The API key was rejected. Use a local API key created on the console under Settings > Control Plane > Integrations (requires UniFi Network 9.0+). Keys from unifi.ui.com are not supported.",
-      "invalid_site": "The console returned 404 Not Found. Check the Site name (usually 'default', not the display name) and that the console runs UniFi OS (UDM/UDR/UXG/Cloud Key with firmware 2.x or later).",
-      "ssl_error": "SSL certificate verification failed. Turn off 'Verify SSL Certificate' unless your console has a valid trusted certificate.",
+      "invalid_site": "The console returned 404 Not Found. Check the site name (usually 'default', not the display name) and that the console runs UniFi OS (UDM/UDR/UXG/Cloud Key with firmware 2.x or later).",
+      "ssl_error": "SSL certificate verification failed. Turn off 'Verify SSL certificate' unless your console has a valid trusted certificate.",
       "timeout": "The console did not respond within 30 seconds. Check the Host/IP and that no firewall is blocking TCP port 443.",
       "unknown": "Unexpected error",
       "already_configured": "Another UniFi WAN entry is already configured for that console and site."
@@ -84,8 +84,8 @@
   },
   "services": {
     "run_speedtest": {
-      "name": "Run Speedtest",
-      "description": "Trigger a manual speedtest on the active UniFi Gateway immediately.",
+      "name": "Run speedtest",
+      "description": "Trigger a manual speedtest on the active UniFi gateway immediately.",
       "fields": {
         "wan": {
           "name": "WAN interface",
